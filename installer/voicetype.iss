@@ -3,7 +3,7 @@
 ; Requires that `pyinstaller build.spec` has been run first (produces dist/VoiceType/)
 
 #define MyAppName        "VoiceType"
-#define MyAppVersion     "1.0.0"
+#define MyAppVersion     "1.0.1"
 #define MyAppPublisher   "Julius Sima"
 #define MyAppExeName     "VoiceType.exe"
 #define MyAppId          "{{B2FC3A41-7D58-4F82-9F3A-VOICETYPE00001}"
