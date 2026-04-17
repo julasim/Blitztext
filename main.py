@@ -68,6 +68,10 @@ class VoiceTypeApp:
         )
         self._register_hotkeys()
 
+        # Ensure the Windows autostart entry reflects the current config on every launch.
+        # (No-op in dev mode; only writes the registry when running as the installed .exe.)
+        settings.set_autostart(self._cfg.get("start_with_windows", True))
+
         atexit.register(self._cleanup)
 
     def run(self) -> int:

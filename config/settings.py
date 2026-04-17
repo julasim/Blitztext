@@ -59,7 +59,16 @@ def set_provider_key(provider: str, api_key: str) -> None:
 
 
 def set_autostart(enabled: bool) -> None:
-    """Add or remove a Windows registry entry for autostart."""
+    """Register or remove a Windows auto-start entry for VoiceType.
+
+    Only effective when running as a packaged executable (PyInstaller build).
+    Running via ``python main.py`` is a no-op to avoid registering the Python
+    interpreter itself.
+    """
+    # Only register autostart for the installed .exe, never for `python main.py`
+    if not getattr(sys, "frozen", False):
+        return
+
     try:
         import winreg
         key = winreg.OpenKey(
@@ -69,10 +78,8 @@ def set_autostart(enabled: bool) -> None:
             winreg.KEY_SET_VALUE,
         )
         if enabled:
-            exe = sys.executable
-            if getattr(sys, "frozen", False):
-                exe = sys.executable  # PyInstaller exe
-            winreg.SetValueEx(key, "VoiceType", 0, winreg.REG_SZ, f'"{exe}"')
+            # sys.executable points at the installed VoiceType.exe when frozen
+            winreg.SetValueEx(key, "VoiceType", 0, winreg.REG_SZ, f'"{sys.executable}"')
         else:
             try:
                 winreg.DeleteValue(key, "VoiceType")
