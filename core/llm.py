@@ -88,7 +88,10 @@ def _call_openai(system: str, user: str, api_key: str, model: str) -> str:
         timeout=TIMEOUT,
     )
     _handle_error(r, "OpenAI")
-    return r.json()["choices"][0]["message"]["content"].strip()
+    try:
+        return r.json()["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError("OpenAI: Antwort konnte nicht gelesen werden.")
 
 
 def _call_anthropic(system: str, user: str, api_key: str, model: str) -> str:
@@ -110,10 +113,15 @@ def _call_anthropic(system: str, user: str, api_key: str, model: str) -> str:
         timeout=TIMEOUT,
     )
     _handle_error(r, "Anthropic")
-    data = r.json()
-    # content is a list of blocks; concat all text blocks
-    parts = [block.get("text", "") for block in data.get("content", []) if block.get("type") == "text"]
-    return "".join(parts).strip()
+    try:
+        data = r.json()
+        parts = [block.get("text", "") for block in data.get("content", []) if block.get("type") == "text"]
+        result = "".join(parts).strip()
+        if not result:
+            raise RuntimeError("Anthropic: Leere Antwort.")
+        return result
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError("Anthropic: Antwort konnte nicht gelesen werden.")
 
 
 def _call_gemini(system: str, user: str, api_key: str, model: str) -> str:
@@ -159,7 +167,10 @@ def _call_openrouter(system: str, user: str, api_key: str, model: str) -> str:
         timeout=TIMEOUT,
     )
     _handle_error(r, "OpenRouter")
-    return r.json()["choices"][0]["message"]["content"].strip()
+    try:
+        return r.json()["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError("OpenRouter: Antwort konnte nicht gelesen werden.")
 
 
 def _call_ollama_cloud(system: str, user: str, api_key: str, model: str) -> str:
@@ -182,5 +193,11 @@ def _call_ollama_cloud(system: str, user: str, api_key: str, model: str) -> str:
         timeout=60.0,
     )
     _handle_error(r, "Ollama Cloud")
-    data = r.json()
-    return data.get("message", {}).get("content", "").strip()
+    try:
+        data = r.json()
+        content = data.get("message", {}).get("content", "").strip()
+        if not content:
+            raise RuntimeError("Ollama Cloud: Leere Antwort.")
+        return content
+    except (KeyError, TypeError):
+        raise RuntimeError("Ollama Cloud: Antwort konnte nicht gelesen werden.")

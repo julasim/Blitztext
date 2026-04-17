@@ -33,7 +33,7 @@ def inject_text(text: str) -> None:
         previous = ""
 
     pyperclip.copy(text)
-    time.sleep(0.08)
+    time.sleep(0.03)
     pyautogui.hotkey("ctrl", "v")
 
     # Restore previous clipboard in the background so we don't block here

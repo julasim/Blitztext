@@ -3,6 +3,12 @@
 import os
 import sys
 
+# Disable HuggingFace's xet accelerator BEFORE importing huggingface_hub,
+# so downloads go through the standard HTTP path with visible tqdm progress.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("HF_HUB_DISABLE_HF_XET", "1")
+os.environ.setdefault("HF_XET_ENABLED", "0")
+
 # Ensure local packages (core/, config/, ui/) resolve regardless of how the script is invoked.
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _THIS_DIR not in sys.path:
@@ -15,6 +21,7 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer, Qt
 
 from config import settings
+from core.log import log, log_exc, reset as reset_log
 from core.audio import AudioRecorder
 from core.transcription import Transcriber
 from core.injector import inject_text
@@ -31,6 +38,8 @@ from ui.update_dialog import UpdateDialog
 
 class VoiceTypeApp:
     def __init__(self):
+        reset_log()
+        log(f"App init — frozen={getattr(sys, 'frozen', False)} exe={sys.executable}")
         self._app = QApplication(sys.argv)
         self._app.setQuitOnLastWindowClosed(False)
         self._app.setApplicationName("VoiceType")
@@ -83,30 +92,32 @@ class VoiceTypeApp:
     def _run_listener(self) -> None:
         try:
             self._hotkey_listener.start()
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"Hotkey listener crashed: {type(e).__name__}: {e}")
 
     def _load_model_async(self) -> None:
         model_name = self._cfg.get("whisper_model", "large-v3-turbo")
+        needs_download = not self._transcriber._is_cached()
+        log(f"Loading Whisper '{model_name}' — cached={not needs_download}")
+
         dialog = DownloadDialog(model_name)
         self._download_dialog = dialog
-
-        shown = {"value": False}
+        if needs_download:
+            log("Model not cached — showing download dialog immediately")
+            dialog.show()
+            dialog.raise_()
 
         def on_progress(done: int, total: int, status: str):
-            def do_update():
-                if not shown["value"]:
-                    dialog.show()
-                    dialog.raise_()
-                    shown["value"] = True
-                dialog.report(done, total, status)
-            self._invoke_main(do_update)
+            self._invoke_main(lambda: dialog.report(done, total, status))
 
         def do_load():
             try:
+                log("Model load thread started")
                 self._transcriber.load(on_progress=on_progress)
+                log("Model load complete")
                 self._invoke_main(self._on_model_loaded)
             except Exception as e:
+                log(f"Model load FAILED: {type(e).__name__}: {e}")
                 self._invoke_main(lambda: self._on_model_error(str(e)))
 
         self._tray.set_state("processing")
@@ -131,14 +142,23 @@ class VoiceTypeApp:
         self._tray.show_message("VoiceType – Fehler", f"Whisper-Modell konnte nicht geladen werden:\n{error}")
 
     def _register_hotkeys(self) -> None:
-        self._hotkey_listener.register(self._cfg.get("hotkey_mode1", "ctrl+alt+1"), 1)
-        self._hotkey_listener.register(self._cfg.get("hotkey_mode2", "ctrl+alt+2"), 2)
-        self._hotkey_listener.register(self._cfg.get("hotkey_mode3", "ctrl+alt+3"), 3)
+        h1 = self._cfg.get("hotkey_mode1", "ctrl+alt+1")
+        h2 = self._cfg.get("hotkey_mode2", "ctrl+alt+2")
+        h3 = self._cfg.get("hotkey_mode3", "ctrl+alt+3")
+        log(f"Register hotkeys: mode1={h1} mode2={h2} mode3={h3}")
+        self._hotkey_listener.register(h1, 1)
+        self._hotkey_listener.register(h2, 2)
+        self._hotkey_listener.register(h3, 3)
 
     def _on_recording_start(self, mode: int) -> None:
+        log(f"Hotkey pressed — mode={mode} model_loaded={self._transcriber.is_loaded} processing={self._processing}")
         if not self._transcriber.is_loaded:
+            log("  → ignoring, model not loaded yet")
+            # Let the listener know we're NOT actually recording, so the
+            # release doesn't look for a recorder that was never started.
+            self._hotkey_listener._reset_active_mode()
             self._invoke_main(lambda: self._tray.show_message(
-                "VoiceType", "Sprachmodell wird noch geladen, bitte kurz warten.",
+                "VoiceType", "Sprachmodell wird noch geladen. Bitte warten bis der Download fertig ist.",
             ))
             return
         with self._processing_lock:
@@ -155,8 +175,10 @@ class VoiceTypeApp:
         self._invoke_main(self._recording_overlay.show_overlay)
 
     def _on_recording_stop(self, mode: int) -> None:
+        log(f"Hotkey released — mode={mode}")
         self._invoke_main(self._recording_overlay.hide_overlay)
         audio = self._recorder.stop()
+        log(f"Audio captured: {audio.size} samples ({audio.size/16000:.1f}s)")
         if audio.size == 0:
             self._invoke_main(lambda: self._tray.set_state("idle"))
             self._invoke_main(lambda: self._tray.show_message(
@@ -170,7 +192,9 @@ class VoiceTypeApp:
             self._processing = True
         self._invoke_main(lambda: self._tray.set_state("processing"))
         try:
+            log(f"Transcribing {audio.size} samples …")
             text = self._transcriber.transcribe(audio)
+            log(f"Transcribed: {text!r}")
             if not text:
                 self._invoke_main(lambda: self._tray.show_message(
                     "VoiceType", "Keine Sprache erkannt.",
@@ -179,6 +203,7 @@ class VoiceTypeApp:
 
             if mode in (2, 3):
                 provider = self._cfg.get("llm_provider", "openrouter")
+                log(f"LLM mode {mode} via {provider} (key set: {bool(self._api_key)})")
                 if not self._api_key:
                     self._invoke_main(lambda: self._tray.show_message(
                         "VoiceType", "Kein API-Key gesetzt. Bitte in Einstellungen eintragen."
@@ -188,9 +213,13 @@ class VoiceTypeApp:
                     text, mode, provider, self._api_key,
                     self._cfg.get("llm_model", ""),
                 )
+                log(f"LLM returned: {text[:80]!r}")
 
+            log("Injecting text …")
             inject_text(text)
+            log("Injection done")
         except Exception as e:
+            log_exc("_process_audio failed")
             err = str(e)
             self._invoke_main(lambda: self._tray.show_message("VoiceType – Fehler", err))
         finally:

@@ -2,6 +2,8 @@ import threading
 from typing import Callable
 import keyboard
 
+from core.log import log
+
 
 class HotkeyListener:
     """Listens for global hotkeys. Each mode has its own hotkey.
@@ -54,8 +56,9 @@ class HotkeyListener:
                     trigger_on_release=False,
                 )
                 self._hooks.append(hook_press)
-            except Exception:
-                pass
+                log(f"add_hotkey OK: '{hotkey_str}' → mode {mode}")
+            except Exception as e:
+                log(f"add_hotkey FAILED: '{hotkey_str}' → {type(e).__name__}: {e}")
 
         self._release_hook = keyboard.on_release(self._handle_key_release)
 
@@ -66,6 +69,9 @@ class HotkeyListener:
     def stop(self) -> None:
         self._stop_event.set()
         self._stop_hooks()
+        # Reset active state so subsequent press events aren't blocked by stale flag
+        with self._lock:
+            self._active_mode = None
 
     def _stop_hooks(self) -> None:
         for hook in self._hooks:
@@ -83,13 +89,15 @@ class HotkeyListener:
 
     def _handle_press(self, mode: int) -> None:
         try:
+            log(f"_handle_press fired — mode={mode}")
             with self._lock:
                 if self._active_mode is not None:
+                    log("  already recording, ignored")
                     return
                 self._active_mode = mode
             self._on_start(mode)
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"_handle_press error: {e}")
 
     def _handle_key_release(self, event) -> None:
         # Runs on the keyboard library's internal thread — never raise.
@@ -142,7 +150,8 @@ class HotkeyListener:
         if fire_stop:
             self._on_stop(mode)
 
-    def update_hotkey(self, mode: int, new_hotkey: str) -> None:
-        """Update a hotkey at runtime: deregister old, register new."""
-        self.deregister_mode(mode)
-        self.register(new_hotkey, mode)
+    def _reset_active_mode(self) -> None:
+        """Clear the active-mode flag. Used when the press callback aborted
+        early (e.g. model not loaded) so subsequent presses aren't blocked."""
+        with self._lock:
+            self._active_mode = None

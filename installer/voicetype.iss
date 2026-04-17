@@ -3,7 +3,7 @@
 ; Requires that `pyinstaller build.spec` has been run first (produces dist/VoiceType/)
 
 #define MyAppName        "VoiceType"
-#define MyAppVersion     "1.0.1"
+#define MyAppVersion     "1.0.0"
 #define MyAppPublisher   "Julius Sima"
 #define MyAppExeName     "VoiceType.exe"
 #define MyAppId          "{{B2FC3A41-7D58-4F82-9F3A-VOICETYPE00001}"
@@ -53,7 +53,7 @@ Filename: "{app}\{#MyAppExeName}"; Flags: nowait postinstall
 [UninstallRun]
 ; Gracefully stop the running app before we start removing files.
 ; Fails silently if app isn't running.
-Filename: "{cmd}"; Parameters: "/C taskkill /IM {#MyAppExeName} /F"; Flags: runhidden
+Filename: "{cmd}"; Parameters: "/C taskkill /IM {#MyAppExeName} /F"; Flags: runhidden; RunOnceId: "KillVoiceType"
 
 [Code]
 { --- Ask at uninstall: also remove user data (Whisper model, config, keys)? --- }
@@ -84,13 +84,17 @@ begin
     if DirExists(AppData) then
       DelTree(AppData, True, True, True);
 
-    { Delete all stored API keys from Windows Credential Manager }
+    { Delete all stored API keys from Windows Credential Manager.
+      keyring's Windows backend stores the MOST RECENT entry with TargetName=VoiceType
+      and older ones as TargetName=<username>@VoiceType.
+      cmdkey exits silently if the entry doesn't exist, so listing all variants is safe. }
     Exec(ExpandConstant('{cmd}'),
-         '/C cmdkey /delete:VoiceType/openai_api_key & ' +
-         'cmdkey /delete:VoiceType/anthropic_api_key & ' +
-         'cmdkey /delete:VoiceType/gemini_api_key & ' +
-         'cmdkey /delete:VoiceType/openrouter_api_key & ' +
-         'cmdkey /delete:VoiceType/ollama_api_key',
+         '/C cmdkey /delete:VoiceType & ' +
+         'cmdkey /delete:openai_api_key@VoiceType & ' +
+         'cmdkey /delete:anthropic_api_key@VoiceType & ' +
+         'cmdkey /delete:gemini_api_key@VoiceType & ' +
+         'cmdkey /delete:openrouter_api_key@VoiceType & ' +
+         'cmdkey /delete:ollama_api_key@VoiceType',
          '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
 end;

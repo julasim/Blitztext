@@ -1,63 +1,30 @@
-import io
 import os
-import threading
 from typing import Callable, Optional
 
+import httpx
 import numpy as np
 from faster_whisper import WhisperModel
 from faster_whisper.utils import _MODELS
-from huggingface_hub import snapshot_download
-from tqdm.auto import tqdm
 
 
-class _ProgressTqdm(tqdm):
-    """Custom tqdm that forwards aggregated progress to a callback.
-
-    huggingface_hub creates one tqdm per file during a snapshot download,
-    so we aggregate bytes across all instances via class-level counters.
-    """
-
-    _callback: Optional[Callable[[int, int, str], None]] = None
-    _total_bytes: int = 0
-    _done_bytes: int = 0
-    _lock = threading.Lock()
-
-    @classmethod
-    def configure(cls, callback: Optional[Callable[[int, int, str], None]]) -> None:
-        with cls._lock:
-            cls._callback = callback
-            cls._total_bytes = 0
-            cls._done_bytes = 0
-
-    def __init__(self, *args, **kwargs):
-        kwargs["disable"] = False
-        # Redirect tqdm's text output to an in-memory buffer (no file handle leak).
-        kwargs["file"] = io.StringIO()
-        super().__init__(*args, **kwargs)
-        with _ProgressTqdm._lock:
-            if self.total:
-                _ProgressTqdm._total_bytes += self.total
-
-    def update(self, n: int = 1) -> None:
-        super().update(n)
-        with _ProgressTqdm._lock:
-            _ProgressTqdm._done_bytes += n
-            done = _ProgressTqdm._done_bytes
-            total = _ProgressTqdm._total_bytes
-            cb = _ProgressTqdm._callback
-        if cb is not None:
-            try:
-                desc = self.desc or ""
-                # Shorten filenames if tqdm puts the full path in desc
-                if len(desc) > 40:
-                    desc = "…" + desc[-40:]
-                cb(done, total, desc)
-            except Exception:
-                pass
+# Essential files we need for faster-whisper to load the model
+_REQUIRED_FILES = [
+    "config.json",
+    "model.bin",
+    "tokenizer.json",
+    "preprocessor_config.json",
+]
+# Optional files — download if present, skip quietly if 404
+_OPTIONAL_FILES = [
+    "vocabulary.txt",
+    "vocabulary.json",
+    "vocab.json",
+]
 
 
 class Transcriber:
-    """Wraps faster-whisper for local speech-to-text."""
+    """Wraps faster-whisper for local speech-to-text with a custom downloader
+    that reports real progress."""
 
     def __init__(self, model_size: str = "base", language: str = "de", models_dir: str | None = None):
         self._model_size = model_size
@@ -75,43 +42,98 @@ class Transcriber:
     def is_loaded(self) -> bool:
         return self._model is not None
 
-    def _is_cached(self, repo_id: str) -> bool:
-        """Check whether the HF snapshot for repo_id already exists under models_dir."""
-        folder = "models--" + repo_id.replace("/", "--")
-        snap_dir = os.path.join(self._models_dir, folder, "snapshots")
-        if not os.path.isdir(snap_dir):
-            return False
-        for entry in os.listdir(snap_dir):
-            full = os.path.join(snap_dir, entry)
-            if os.path.isdir(full) and os.listdir(full):
-                return True
-        return False
+    def _local_model_dir(self) -> str:
+        return os.path.join(self._models_dir, self._model_size)
+
+    def _is_cached(self, repo_id: str = None) -> bool:
+        """Model is cached if all required files exist with non-zero size."""
+        d = self._local_model_dir()
+        for f in _REQUIRED_FILES:
+            p = os.path.join(d, f)
+            if not os.path.isfile(p) or os.path.getsize(p) == 0:
+                return False
+        return True
 
     def load(self, on_progress: Optional[Callable[[int, int, str], None]] = None) -> None:
-        """Load the Whisper model. Downloads via huggingface_hub if needed.
-
-        If on_progress is given and a download is required, it is called with
-        (bytes_done, bytes_total, status_text) from the download thread.
-        """
+        """Load the Whisper model. Downloads missing files with real progress."""
         repo_id = _MODELS.get(self._model_size, self._model_size)
+        local_dir = self._local_model_dir()
+        os.makedirs(local_dir, exist_ok=True)
 
-        if on_progress is not None and not self._is_cached(repo_id):
-            _ProgressTqdm.configure(on_progress)
-            try:
-                snapshot_download(
-                    repo_id=repo_id,
-                    cache_dir=self._models_dir,
-                    tqdm_class=_ProgressTqdm,
-                )
-            finally:
-                _ProgressTqdm.configure(None)
+        if not self._is_cached():
+            self._download_model(repo_id, local_dir, on_progress)
 
+        # Load directly from the flat local dir — no symlinks involved
         self._model = WhisperModel(
-            self._model_size,
+            local_dir,
             device="cpu",
             compute_type="int8",
-            download_root=self._models_dir,
         )
+
+    def _download_model(
+        self,
+        repo_id: str,
+        local_dir: str,
+        on_progress: Optional[Callable[[int, int, str], None]],
+    ) -> None:
+        """Download each model file via direct HTTPS with streaming progress."""
+        base_url = f"https://huggingface.co/{repo_id}/resolve/main"
+
+        # Step 1: determine which files we actually need to download and their sizes
+        file_list: list[tuple[str, int]] = []  # (name, size)
+        for name in _REQUIRED_FILES + _OPTIONAL_FILES:
+            local_path = os.path.join(local_dir, name)
+            if os.path.isfile(local_path) and os.path.getsize(local_path) > 0:
+                continue  # already have it
+            try:
+                head = httpx.head(f"{base_url}/{name}", follow_redirects=True, timeout=20)
+                if head.status_code != 200:
+                    if name in _REQUIRED_FILES:
+                        raise RuntimeError(f"{name} nicht verfügbar (HTTP {head.status_code}).")
+                    continue  # optional file not available
+                size = int(head.headers.get("Content-Length", "0"))
+                file_list.append((name, size))
+            except httpx.HTTPError as e:
+                if name in _REQUIRED_FILES:
+                    raise RuntimeError(f"Verbindung zu HuggingFace fehlgeschlagen: {e}")
+                continue
+
+        total_bytes = sum(s for _, s in file_list)
+        done_bytes = 0
+
+        if on_progress is not None:
+            on_progress(0, total_bytes, "Vorbereitung …")
+
+        # Step 2: download each file with streaming
+        for name, size in file_list:
+            target_path = os.path.join(local_dir, name)
+            tmp_path = target_path + ".part"
+            try:
+                with httpx.stream("GET", f"{base_url}/{name}", follow_redirects=True, timeout=60.0) as r:
+                    r.raise_for_status()
+                    with open(tmp_path, "wb") as f:
+                        for chunk in r.iter_bytes(chunk_size=256 * 1024):
+                            if not chunk:
+                                continue
+                            f.write(chunk)
+                            done_bytes += len(chunk)
+                            if on_progress is not None:
+                                try:
+                                    on_progress(done_bytes, total_bytes, name)
+                                except Exception:
+                                    pass
+                # Atomic replace on success
+                if os.path.exists(target_path):
+                    os.remove(target_path)
+                os.rename(tmp_path, target_path)
+            except Exception:
+                # Clean up the .part file on failure, then re-raise
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except Exception:
+                    pass
+                raise
 
     def set_language(self, language: str) -> None:
         self._language = language
@@ -128,10 +150,11 @@ class Transcriber:
             return ""
 
         lang = None if self._language == "auto" else self._language
+        # beam_size=1 is near-identical to 5 in quality with VAD enabled, but faster
         segments, _info = self._model.transcribe(
             audio,
             language=lang,
-            beam_size=5,
+            beam_size=1,
             vad_filter=True,
         )
         text = " ".join(seg.text.strip() for seg in segments)
