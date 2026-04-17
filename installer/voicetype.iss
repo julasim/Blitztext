@@ -26,8 +26,9 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
-CloseApplications=force          ; Kill running VoiceType before updating
-RestartApplications=no           ; We handle restart via [Run]
+; Close running VoiceType before updating; we handle restart via [Run]
+CloseApplications=yes
+RestartApplications=no
 SetupIconFile=..\ui\assets\icon.ico
 
 [Languages]

@@ -82,13 +82,23 @@ class HotkeyListener:
             self._release_hook = None
 
     def _handle_press(self, mode: int) -> None:
-        with self._lock:
-            if self._active_mode is not None:
-                return
-            self._active_mode = mode
-        self._on_start(mode)
+        try:
+            with self._lock:
+                if self._active_mode is not None:
+                    return
+                self._active_mode = mode
+            self._on_start(mode)
+        except Exception:
+            pass
 
     def _handle_key_release(self, event) -> None:
+        # Runs on the keyboard library's internal thread — never raise.
+        try:
+            self._handle_key_release_impl(event)
+        except Exception:
+            pass
+
+    def _handle_key_release_impl(self, event) -> None:
         fire_stop = False
         mode = None
 
@@ -104,8 +114,13 @@ class HotkeyListener:
             if active_hotkey is None:
                 return
 
+            # `event.name` can be None for some special keys
+            name = getattr(event, "name", None)
+            if not isinstance(name, str) or not name:
+                return
+
             parts = [p.strip().lower() for p in active_hotkey.replace("+", " ").split()]
-            released = event.name.lower()
+            released = name.lower()
 
             normalize = {
                 "strg": "ctrl", "steuerung": "ctrl",

@@ -84,10 +84,33 @@ class HotkeyBadge(QPushButton):
     _MODIFIER_CANONICAL = {"ctrl", "alt", "shift"}
 
     def _on_key_event(self, event) -> None:
+        # This runs on the `keyboard` library's internal thread. Any uncaught
+        # exception here can crash the whole Python process, so wrap everything.
+        try:
+            self._on_key_event_impl(event)
+        except Exception:
+            # As a safety net: stop listening cleanly and revert the badge.
+            self._listening = False
+            try:
+                kb.unhook(self._hook)
+            except Exception:
+                pass
+            try:
+                self._update_label()
+                self.setStyleSheet(self._normal_style())
+            except Exception:
+                pass
+
+    def _on_key_event_impl(self, event) -> None:
         if not self._listening:
             return
 
-        key_name = event.name.lower()
+        # `event.name` can be None for some special/media keys — guard against it.
+        name = getattr(event, "name", None)
+        if not isinstance(name, str) or not name:
+            return
+
+        key_name = name.lower()
         normalized = self._NORMALIZE.get(key_name, key_name)
 
         if event.event_type == "down":
