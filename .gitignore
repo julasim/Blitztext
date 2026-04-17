@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+
+# PyInstaller output
+build/
+dist/
+dist-installer/
+*.manifest
+*.spec.bak
+
+# Downloaded Whisper models (too large for git, auto-downloaded on first run)
+models/*
+!models/.gitkeep
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs & local state
+*.log
