@@ -178,7 +178,10 @@ class VoiceTypeApp:
         log(f"Hotkey released — mode={mode}")
         self._invoke_main(self._recording_overlay.hide_overlay)
         audio = self._recorder.stop()
-        log(f"Audio captured: {audio.size} samples ({audio.size/16000:.1f}s)")
+        import numpy as _np
+        peak = float(_np.abs(audio).max()) if audio.size > 0 else 0.0
+        rms = float(_np.sqrt(_np.mean(audio ** 2))) if audio.size > 0 else 0.0
+        log(f"Audio captured: {audio.size} samples ({audio.size/16000:.1f}s)  peak={peak:.3f}  rms={rms:.3f}")
         if audio.size == 0:
             self._invoke_main(lambda: self._tray.set_state("idle"))
             self._invoke_main(lambda: self._tray.show_message(
