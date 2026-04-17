@@ -3,13 +3,19 @@
 # Produces:    dist/VoiceType/VoiceType.exe  (+ supporting files)
 # Then wrap:   iscc installer/voicetype.iss
 
+from PyInstaller.utils.hooks import collect_data_files
+
+# faster_whisper ships asset files (e.g. silero_vad_v6.onnx) that must travel
+# with the bundle; PyInstaller doesn't detect them automatically.
+_fw_data = collect_data_files("faster_whisper")
+
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
     datas=[
         ('ui/assets', 'ui/assets'),
-    ],
+    ] + _fw_data,
     hiddenimports=[
         'faster_whisper',
         'sounddevice',
