@@ -76,64 +76,82 @@ class Transcriber:
         local_dir: str,
         on_progress: Optional[Callable[[int, int, str], None]],
     ) -> None:
-        """Download each model file via direct HTTPS with streaming progress."""
+        """Download each model file via direct HTTPS with streaming progress.
+
+        Strategy for fast, visible progress:
+        - One quick HEAD on model.bin only to seed the total (it's ~99 % of size).
+        - A shared httpx.Client reuses the TLS connection for all subsequent requests.
+        - Streaming begins immediately → user sees MB/percent from the first chunk.
+        """
         base_url = f"https://huggingface.co/{repo_id}/resolve/main"
 
-        # Step 1: determine which files we actually need to download and their sizes
-        file_list: list[tuple[str, int]] = []  # (name, size)
-        for name in _REQUIRED_FILES + _OPTIONAL_FILES:
-            local_path = os.path.join(local_dir, name)
-            if os.path.isfile(local_path) and os.path.getsize(local_path) > 0:
-                continue  # already have it
-            try:
-                head = httpx.head(f"{base_url}/{name}", follow_redirects=True, timeout=20)
-                if head.status_code != 200:
-                    if name in _REQUIRED_FILES:
-                        raise RuntimeError(f"{name} nicht verfügbar (HTTP {head.status_code}).")
-                    continue  # optional file not available
-                size = int(head.headers.get("Content-Length", "0"))
-                file_list.append((name, size))
-            except httpx.HTTPError as e:
-                if name in _REQUIRED_FILES:
-                    raise RuntimeError(f"Verbindung zu HuggingFace fehlgeschlagen: {e}")
-                continue
+        # Try required + optional files; order big file FIRST so the progress bar
+        # has an accurate total as soon as it matters.
+        candidates = [("model.bin", True)]
+        for n in _REQUIRED_FILES:
+            if n != "model.bin":
+                candidates.append((n, True))
+        for n in _OPTIONAL_FILES:
+            candidates.append((n, False))
 
-        total_bytes = sum(s for _, s in file_list)
+        total_bytes = 0
         done_bytes = 0
 
-        if on_progress is not None:
-            on_progress(0, total_bytes, "Vorbereitung …")
-
-        # Step 2: download each file with streaming
-        for name, size in file_list:
-            target_path = os.path.join(local_dir, name)
-            tmp_path = target_path + ".part"
+        with httpx.Client(follow_redirects=True, timeout=60.0) as client:
+            # Seed total with model.bin size via a single fast HEAD
             try:
-                with httpx.stream("GET", f"{base_url}/{name}", follow_redirects=True, timeout=60.0) as r:
-                    r.raise_for_status()
-                    with open(tmp_path, "wb") as f:
-                        for chunk in r.iter_bytes(chunk_size=256 * 1024):
-                            if not chunk:
-                                continue
-                            f.write(chunk)
-                            done_bytes += len(chunk)
-                            if on_progress is not None:
-                                try:
-                                    on_progress(done_bytes, total_bytes, name)
-                                except Exception:
-                                    pass
-                # Atomic replace on success
-                if os.path.exists(target_path):
-                    os.remove(target_path)
-                os.rename(tmp_path, target_path)
-            except Exception:
-                # Clean up the .part file on failure, then re-raise
+                head = client.head(f"{base_url}/model.bin")
+                if head.status_code == 200:
+                    total_bytes = int(head.headers.get("Content-Length", "0"))
+            except httpx.HTTPError:
+                pass
+
+            if on_progress is not None:
+                on_progress(0, total_bytes, "model.bin")
+
+            for name, required in candidates:
+                target_path = os.path.join(local_dir, name)
+                if os.path.isfile(target_path) and os.path.getsize(target_path) > 0:
+                    continue
+                tmp_path = target_path + ".part"
                 try:
-                    if os.path.exists(tmp_path):
-                        os.remove(tmp_path)
+                    with client.stream("GET", f"{base_url}/{name}") as r:
+                        if r.status_code == 404 and not required:
+                            continue
+                        if r.status_code != 200:
+                            if required:
+                                raise RuntimeError(
+                                    f"{name} nicht verfügbar (HTTP {r.status_code})."
+                                )
+                            continue
+                        size = int(r.headers.get("Content-Length", "0"))
+                        # Adjust total if we discover a file we didn't count in the seed
+                        if name != "model.bin":
+                            total_bytes += size
+                        with open(tmp_path, "wb") as f:
+                            for chunk in r.iter_bytes(chunk_size=256 * 1024):
+                                if not chunk:
+                                    continue
+                                f.write(chunk)
+                                done_bytes += len(chunk)
+                                if on_progress is not None:
+                                    try:
+                                        on_progress(done_bytes, total_bytes, name)
+                                    except Exception:
+                                        pass
+                    # Atomic replace on success
+                    if os.path.exists(target_path):
+                        os.remove(target_path)
+                    os.rename(tmp_path, target_path)
                 except Exception:
-                    pass
-                raise
+                    try:
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+                    except Exception:
+                        pass
+                    if required:
+                        raise
+                    # optional file failed — silently skip
 
     def set_language(self, language: str) -> None:
         self._language = language
