@@ -3,7 +3,7 @@ DEFAULTS = {
     "hotkey_mode1": "ctrl+alt+1",
     "hotkey_mode2": "ctrl+alt+2",
     "hotkey_mode3": "ctrl+alt+3",
-    "whisper_model": "large-v3-turbo",
+    "whisper_model": "small",
     "language": "de",
     "llm_provider": "openrouter",
     "llm_model": "google/gemini-2.0-flash-001",

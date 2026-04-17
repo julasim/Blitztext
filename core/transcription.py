@@ -168,14 +168,16 @@ class Transcriber:
             return ""
 
         lang = None if self._language == "auto" else self._language
-        # beam_size=1 is near-identical to 5 in quality with VAD enabled, but faster.
-        # VAD threshold lowered from 0.5 (default) → 0.3 so quieter mics still register.
         segments, _info = self._model.transcribe(
             audio,
             language=lang,
             beam_size=1,
             vad_filter=True,
             vad_parameters={"threshold": 0.3, "min_silence_duration_ms": 500},
+            # Speed tuning: skip timestamp prediction and text conditioning.
+            # Both would slow inference down for ~no quality benefit in dictation.
+            without_timestamps=True,
+            condition_on_previous_text=False,
         )
         text = " ".join(seg.text.strip() for seg in segments)
         return text.strip()
