@@ -9,21 +9,19 @@ from faster_whisper.utils import _MODELS
 from core.log import log
 
 
-# Essential files we need for faster-whisper to load the model
-_REQUIRED_FILES = [
-    "config.json",
-    "model.bin",
-    "tokenizer.json",
-]
-# Optional files — download if present, skip quietly if 404.
-# preprocessor_config.json isn't in every HF repo (e.g. Systran/faster-whisper-medium)
-# and faster-whisper falls back to sensible defaults without it.
-_OPTIONAL_FILES = [
-    "preprocessor_config.json",
-    "vocabulary.txt",
-    "vocabulary.json",
-    "vocab.json",
-]
+# Core files all faster-whisper repos contain
+_CORE_FILES = ["config.json", "model.bin", "tokenizer.json"]
+
+# At least ONE of these vocabulary files must exist (different repos use
+# different names: Systran uses vocabulary.txt, mobiuslabsgmbh uses vocabulary.json).
+_VOCAB_FILES = ["vocabulary.txt", "vocabulary.json"]
+
+# Nice-to-have files; download if available, skip on 404.
+_OPTIONAL_FILES = ["preprocessor_config.json", "vocab.json"]
+
+# Every file we'll try to fetch from HF (order doesn't matter for download logic,
+# but model.bin is special-cased for the total-size HEAD).
+_ALL_KNOWN_FILES = _CORE_FILES + _VOCAB_FILES + _OPTIONAL_FILES
 
 
 class Transcriber:
@@ -50,13 +48,17 @@ class Transcriber:
         return os.path.join(self._models_dir, self._model_size)
 
     def _is_cached(self) -> bool:
-        """Model is cached if all required files exist with non-zero size."""
+        """Model is cached if all core files and at least one vocab file exist."""
         d = self._local_model_dir()
-        for f in _REQUIRED_FILES:
+        for f in _CORE_FILES:
             p = os.path.join(d, f)
             if not os.path.isfile(p) or os.path.getsize(p) == 0:
                 return False
-        return True
+        for f in _VOCAB_FILES:
+            p = os.path.join(d, f)
+            if os.path.isfile(p) and os.path.getsize(p) > 0:
+                return True
+        return False
 
     def load(self, on_progress: Optional[Callable[[int, int, str], None]] = None) -> None:
         """Load the Whisper model. Downloads missing files with real progress."""
@@ -89,14 +91,10 @@ class Transcriber:
         """
         base_url = f"https://huggingface.co/{repo_id}/resolve/main"
 
-        # Try required + optional files; order big file FIRST so the progress bar
-        # has an accurate total as soon as it matters.
-        candidates = [("model.bin", True)]
-        for n in _REQUIRED_FILES:
-            if n != "model.bin":
-                candidates.append((n, True))
-        for n in _OPTIONAL_FILES:
-            candidates.append((n, False))
+        # Try every known file from HF. Whichever exists gets downloaded.
+        # _is_cached() enforces the actual minimum set after the loop.
+        # Order: model.bin first so the progress total is correct from chunk 1.
+        candidates = ["model.bin"] + [f for f in _ALL_KNOWN_FILES if f != "model.bin"]
 
         total_bytes = 0
         done_bytes = 0
@@ -113,23 +111,17 @@ class Transcriber:
             if on_progress is not None:
                 on_progress(0, total_bytes, "model.bin")
 
-            for name, required in candidates:
+            for name in candidates:
                 target_path = os.path.join(local_dir, name)
                 if os.path.isfile(target_path) and os.path.getsize(target_path) > 0:
                     continue
                 tmp_path = target_path + ".part"
                 try:
                     with client.stream("GET", f"{base_url}/{name}") as r:
-                        if r.status_code == 404 and not required:
-                            continue
-                        if r.status_code != 200:
-                            if required:
-                                raise RuntimeError(
-                                    f"{name} nicht verfügbar (HTTP {r.status_code})."
-                                )
-                            continue
+                        if r.status_code == 404:
+                            continue  # file not in this repo — skip
+                        r.raise_for_status()
                         size = int(r.headers.get("Content-Length", "0"))
-                        # Adjust total if we discover a file we didn't count in the seed
                         if name != "model.bin":
                             total_bytes += size
                         with open(tmp_path, "wb") as f:
@@ -144,7 +136,6 @@ class Transcriber:
                                         on_progress(done_bytes, total_bytes, name)
                                     except Exception:
                                         pass
-                                # Periodic diagnostic log every 50 MB
                                 done_mb = done_bytes // (50 * 1024 * 1024)
                                 if done_mb > last_logged_mb:
                                     last_logged_mb = done_mb
@@ -153,7 +144,6 @@ class Transcriber:
                                         f"{done_bytes/1_000_000:.0f} / "
                                         f"{total_bytes/1_000_000:.0f} MB"
                                     )
-                    # Atomic replace on success
                     if os.path.exists(target_path):
                         os.remove(target_path)
                     os.rename(tmp_path, target_path)
@@ -163,9 +153,18 @@ class Transcriber:
                             os.remove(tmp_path)
                     except Exception:
                         pass
-                    if required:
+                    # Core/vocab files are verified via _is_cached() below, so
+                    # we only re-raise if it's clearly a critical file.
+                    if name in _CORE_FILES:
                         raise
-                    # optional file failed — silently skip
+                    # optional or vocab file failed — silently skip; validated below
+
+        # Sanity check: must have core files + at least one vocabulary file
+        if not self._is_cached():
+            raise RuntimeError(
+                "Modell-Dateien unvollständig. Bitte Internetverbindung prüfen "
+                "und App neu starten."
+            )
 
     def set_language(self, language: str) -> None:
         self._language = language
