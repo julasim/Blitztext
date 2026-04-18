@@ -71,6 +71,7 @@ class RecordingOverlay(QWidget):
         self._start_time = time.time()
         self._current = [0.35] * self.BAR_COUNT
         self._target = [0.35] * self.BAR_COUNT
+        self._phases = [random.random() * math.pi * 2 for _ in range(self.BAR_COUNT)]
 
         self.show()
         self.raise_()

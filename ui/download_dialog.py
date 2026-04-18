@@ -26,6 +26,7 @@ class DownloadDialog(QDialog):
             | Qt.WindowType.WindowTitleHint
             | Qt.WindowType.CustomizeWindowHint
         )
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setStyleSheet(
             f"QDialog {{ background-color: {C_BG}; }}"
             f"QLabel {{ color: {C_TEXT}; font-family: 'Segoe UI'; }}"

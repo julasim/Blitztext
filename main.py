@@ -51,8 +51,8 @@ class _MainThreadInvoker(QObject):
     def _run(self, fn):
         try:
             fn()
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"_invoke_main callback failed: {type(e).__name__}: {e}")
 
     def invoke(self, fn):
         self._call.emit(fn)
@@ -184,11 +184,17 @@ class VoiceTypeApp:
         log(f"Hotkey pressed — mode={mode} model_loaded={self._transcriber.is_loaded} processing={self._processing}")
         if not self._transcriber.is_loaded:
             log("  → ignoring, model not loaded yet")
-            # Let the listener know we're NOT actually recording, so the
-            # release doesn't look for a recorder that was never started.
             self._hotkey_listener._reset_active_mode()
             self._invoke_main(lambda: self._tray.show_message(
                 "VoiceType", "Sprachmodell wird noch geladen. Bitte warten bis der Download fertig ist.",
+            ))
+            return
+        # Warn up-front if LLM modes lack an API key, so user doesn't waste a recording
+        if mode in (2, 3) and not self._api_key:
+            log(f"  → ignoring, no API key for mode {mode}")
+            self._hotkey_listener._reset_active_mode()
+            self._invoke_main(lambda: self._tray.show_message(
+                "VoiceType", "Kein API-Key gesetzt. Bitte in Einstellungen eintragen.",
             ))
             return
         with self._processing_lock:

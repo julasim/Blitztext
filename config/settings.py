@@ -25,8 +25,14 @@ def load() -> dict:
             with open(path, "r", encoding="utf-8") as f:
                 stored = json.load(f)
             cfg.update(stored)
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            # Corrupted or unreadable — log so the user has a chance to notice
+            # that their settings were silently reset to defaults.
+            try:
+                from core.log import log
+                log(f"Config file unreadable, falling back to defaults: {e}")
+            except Exception:
+                pass
     return cfg
 
 
