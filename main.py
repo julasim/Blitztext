@@ -48,11 +48,11 @@ class VoiceTypeApp:
         # API key of the currently selected provider (cached for fast access from hotkey thread)
         self._api_key = settings.get_provider_key(self._cfg.get("llm_provider", "openrouter"))
 
-        # Prefer the "small" model for speed. Auto-migrate older defaults that
-        # were too slow on CPU (base is too inaccurate, large-v3-turbo too slow).
-        FAST_DEFAULT = "small"
-        if self._cfg.get("whisper_model") in ("base", "large-v3-turbo"):
-            self._cfg["whisper_model"] = FAST_DEFAULT
+        # Default model = medium (balance of German quality and CPU speed).
+        # Only migrate configs that still hold one of our previous auto-defaults;
+        # if the user picked a model explicitly (outside this list), respect it.
+        if self._cfg.get("whisper_model") in ("base", "small", "large-v3-turbo"):
+            self._cfg["whisper_model"] = "medium"
             settings.save(self._cfg)
 
         self._recorder = AudioRecorder()

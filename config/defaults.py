@@ -3,7 +3,7 @@ DEFAULTS = {
     "hotkey_mode1": "ctrl+alt+1",
     "hotkey_mode2": "ctrl+alt+2",
     "hotkey_mode3": "ctrl+alt+3",
-    "whisper_model": "small",
+    "whisper_model": "medium",
     "language": "de",
     "llm_provider": "openrouter",
     "llm_model": "google/gemini-2.0-flash-001",
@@ -27,3 +27,12 @@ PROVIDER_LABELS = {
     "openrouter": "OpenRouter",
     "ollama": "Ollama Cloud",
 }
+
+
+# Whisper models available in the settings dropdown.
+# Order: fastest → highest quality.
+WHISPER_MODELS = [
+    ("small",            "Schnell (500 MB)"),
+    ("medium",           "Ausgewogen (1,5 GB)"),
+    ("large-v3-turbo",   "Höchste Qualität (1,6 GB)"),
+]

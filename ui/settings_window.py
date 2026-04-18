@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 import keyboard as kb
 
-from config.defaults import PROVIDER_LABELS, PROVIDER_DEFAULT_MODELS
+from config.defaults import PROVIDER_LABELS, PROVIDER_DEFAULT_MODELS, WHISPER_MODELS
 from config import settings as settings_mod
 
 
@@ -335,6 +335,18 @@ class SettingsWindow(QWidget):
         # --- ALLGEMEIN ---
         layout.addWidget(_section_label("ALLGEMEIN"))
 
+        self._whisper_combo = QComboBox()
+        for model_id, label in WHISPER_MODELS:
+            self._whisper_combo.addItem(label, userData=model_id)
+        self._whisper_combo.setFixedWidth(240)
+        current_model = self._config.get("whisper_model", "medium")
+        for i, (model_id, _label) in enumerate(WHISPER_MODELS):
+            if model_id == current_model:
+                self._whisper_combo.setCurrentIndex(i)
+                break
+        layout.addLayout(self._field_row("Sprachmodell", self._whisper_combo))
+        layout.addWidget(_hairline())
+
         self._language_combo = QComboBox()
         self._language_combo.addItems(["Deutsch", "Englisch", "Automatisch"])
         self._language_combo.setFixedWidth(240)
@@ -470,6 +482,7 @@ class SettingsWindow(QWidget):
             "hotkey_mode3": self._badge3.hotkey,
             "llm_provider": current,
             "llm_model": self._llm_model_input.text().strip(),
+            "whisper_model": self._whisper_combo.currentData() or "medium",
             "language": lang_map.get(self._language_combo.currentText(), "de"),
             "start_with_windows": self._autostart_toggle.enabled,
             "provider_keys": dict(self._key_edits),
