@@ -109,7 +109,11 @@ class VoiceTypeApp:
             dialog.raise_()
 
         def on_progress(done: int, total: int, status: str):
-            self._invoke_main(lambda: dialog.report(done, total, status))
+            # dialog.report() emits a pyqtSignal with QueuedConnection, which is
+            # already thread-safe and delivers to the GUI thread. No extra
+            # QTimer.singleShot wrapping needed (that doesn't fire reliably
+            # from a non-Qt thread without an event loop).
+            dialog.report(done, total, status)
 
         def do_load():
             try:

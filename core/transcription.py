@@ -6,6 +6,8 @@ import numpy as np
 from faster_whisper import WhisperModel
 from faster_whisper.utils import _MODELS
 
+from core.log import log
+
 
 # Essential files we need for faster-whisper to load the model
 _REQUIRED_FILES = [
@@ -129,6 +131,7 @@ class Transcriber:
                         if name != "model.bin":
                             total_bytes += size
                         with open(tmp_path, "wb") as f:
+                            last_logged_mb = 0
                             for chunk in r.iter_bytes(chunk_size=256 * 1024):
                                 if not chunk:
                                     continue
@@ -139,6 +142,15 @@ class Transcriber:
                                         on_progress(done_bytes, total_bytes, name)
                                     except Exception:
                                         pass
+                                # Periodic diagnostic log every 50 MB
+                                done_mb = done_bytes // (50 * 1024 * 1024)
+                                if done_mb > last_logged_mb:
+                                    last_logged_mb = done_mb
+                                    log(
+                                        f"Download {name}: "
+                                        f"{done_bytes/1_000_000:.0f} / "
+                                        f"{total_bytes/1_000_000:.0f} MB"
+                                    )
                     # Atomic replace on success
                     if os.path.exists(target_path):
                         os.remove(target_path)
