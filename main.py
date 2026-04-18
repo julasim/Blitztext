@@ -18,7 +18,7 @@ import atexit
 import threading
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import QTimer, Qt, QObject, pyqtSignal
 
 from config import settings
 from core.log import log, log_exc, reset as reset_log
@@ -36,6 +36,28 @@ from ui.recording_overlay import RecordingOverlay
 from ui.update_dialog import UpdateDialog
 
 
+class _MainThreadInvoker(QObject):
+    """Run callables on the Qt main thread from any thread.
+
+    QTimer.singleShot from a thread without an event loop fires unreliably.
+    A pyqtSignal with a QueuedConnection is the documented thread-safe way.
+    """
+    _call = pyqtSignal(object)
+
+    def __init__(self):
+        super().__init__()
+        self._call.connect(self._run, Qt.ConnectionType.QueuedConnection)
+
+    def _run(self, fn):
+        try:
+            fn()
+        except Exception:
+            pass
+
+    def invoke(self, fn):
+        self._call.emit(fn)
+
+
 class VoiceTypeApp:
     def __init__(self):
         reset_log()
@@ -43,6 +65,9 @@ class VoiceTypeApp:
         self._app = QApplication(sys.argv)
         self._app.setQuitOnLastWindowClosed(False)
         self._app.setApplicationName("VoiceType")
+
+        # Must be created on the main (GUI) thread — used for all cross-thread UI calls.
+        self._invoker = _MainThreadInvoker()
 
         self._cfg = settings.load()
         # API key of the currently selected provider (cached for fast access from hotkey thread)
@@ -324,8 +349,8 @@ class VoiceTypeApp:
             pass
 
     def _invoke_main(self, fn) -> None:
-        """Run a callable on the Qt main thread."""
-        QTimer.singleShot(0, fn)
+        """Run a callable on the Qt main thread (thread-safe via pyqtSignal)."""
+        self._invoker.invoke(fn)
 
 
 def main():
