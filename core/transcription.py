@@ -14,10 +14,12 @@ _REQUIRED_FILES = [
     "config.json",
     "model.bin",
     "tokenizer.json",
-    "preprocessor_config.json",
 ]
-# Optional files — download if present, skip quietly if 404
+# Optional files — download if present, skip quietly if 404.
+# preprocessor_config.json isn't in every HF repo (e.g. Systran/faster-whisper-medium)
+# and faster-whisper falls back to sensible defaults without it.
 _OPTIONAL_FILES = [
+    "preprocessor_config.json",
     "vocabulary.txt",
     "vocabulary.json",
     "vocab.json",
