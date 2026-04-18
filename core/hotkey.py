@@ -33,12 +33,6 @@ class HotkeyListener:
                 del self._hotkeys[k]
             self._hotkeys[hotkey_str] = mode
 
-    def deregister_mode(self, mode: int) -> None:
-        with self._lock:
-            old_keys = [k for k, m in self._hotkeys.items() if m == mode]
-            for k in old_keys:
-                del self._hotkeys[k]
-
     def start(self) -> None:
         """Start listening. Blocks until stop() is called."""
         self._stop_hooks()

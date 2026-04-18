@@ -47,7 +47,7 @@ class Transcriber:
     def _local_model_dir(self) -> str:
         return os.path.join(self._models_dir, self._model_size)
 
-    def _is_cached(self, repo_id: str = None) -> bool:
+    def _is_cached(self) -> bool:
         """Model is cached if all required files exist with non-zero size."""
         d = self._local_model_dir()
         for f in _REQUIRED_FILES:

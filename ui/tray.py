@@ -6,7 +6,6 @@ from PyQt6.QtCore import pyqtSignal, QObject, QRectF, Qt
 class TraySignals(QObject):
     open_settings = pyqtSignal()
     quit_app = pyqtSignal()
-    state_changed = pyqtSignal(str)
 
 
 class SystemTray:
@@ -118,7 +117,6 @@ class SystemTray:
             return
         self._state = state
         self._set_icon(state)
-        self.signals.state_changed.emit(state)
 
     def show_message(self, title: str, message: str) -> None:
         self._tray.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 3000)
