@@ -109,6 +109,11 @@ class RecordingOverlay(QWidget):
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
+        # Explicitly clear to transparent so Windows 11 dark-mode never bleeds
+        # through the shadow padding. Belt-and-suspenders with WA_TranslucentBackground.
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        p.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # Pill rect, offset inside the padded widget

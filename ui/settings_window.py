@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QComboBox, QPushButton, QFrame, QPlainTextEdit,
+    QComboBox, QPushButton, QFrame, QPlainTextEdit, QScrollArea,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -256,7 +256,7 @@ class SettingsWindow(QWidget):
         # Track dirty edits of the currently shown key
         self._key_edits: dict[str, str] = {}
         self.setWindowTitle("Blitztext – Einstellungen")
-        self.setFixedWidth(460)
+        self.setFixedSize(460, 680)
         self.setWindowFlags(Qt.WindowType.WindowCloseButtonHint | Qt.WindowType.WindowTitleHint)
         self.setStyleSheet(
             f"QWidget {{ font-family: 'Segoe UI'; font-size: 13px; "
@@ -273,13 +273,34 @@ class SettingsWindow(QWidget):
             f"QComboBox QAbstractItemView {{ background-color: {C_BG}; color: {C_TEXT}; "
             f"  border: 1px solid {C_HAIRLINE}; selection-background-color: {C_SURFACE}; "
             f"  selection-color: {C_TEXT}; padding: 4px; }}"
+            # Scroll area: no border, soft thin scrollbar
+            f"QScrollArea {{ border: none; background-color: {C_BG}; }}"
+            f"QScrollBar:vertical {{ background: transparent; width: 8px; margin: 4px 2px; }}"
+            f"QScrollBar::handle:vertical {{ background: #D0D0D0; border-radius: 4px; min-height: 24px; }}"
+            f"QScrollBar::handle:vertical:hover {{ background: #B8B8B8; }}"
+            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
+            f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}"
         )
         self._build_ui()
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        # Outer layout (the QWidget itself): scroll area on top, pinned footer below.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        outer.addWidget(scroll, 1)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setSpacing(0)
-        layout.setContentsMargins(32, 28, 32, 24)
+        layout.setContentsMargins(32, 28, 32, 8)
+        scroll.setWidget(content)
 
         # Title
         title = QLabel("Blitztext")
@@ -386,9 +407,17 @@ class SettingsWindow(QWidget):
         self._autostart_toggle = Toggle(self._config.get("start_with_windows", True))
         layout.addLayout(self._field_row("Mit Windows starten", self._autostart_toggle))
 
-        # --- Footer ---
-        layout.addSpacing(28)
-        footer = QHBoxLayout()
+        # Bottom padding inside the scrolled content so the last row isn't
+        # flush against the footer hairline.
+        layout.addSpacing(20)
+
+        # --- Footer (pinned OUTSIDE the scroll area, always visible) ---
+        footer_bar = QFrame()
+        footer_bar.setStyleSheet(
+            f"QFrame {{ background-color: {C_BG}; border-top: 1px solid {C_HAIRLINE}; }}"
+        )
+        footer = QHBoxLayout(footer_bar)
+        footer.setContentsMargins(32, 14, 32, 14)
         footer.setSpacing(8)
         footer.addStretch()
 
@@ -414,7 +443,9 @@ class SettingsWindow(QWidget):
         )
         save_btn.clicked.connect(self._save)
         footer.addWidget(save_btn)
-        layout.addLayout(footer)
+
+        # Attach footer to the OUTER layout (the scroll area sits above it).
+        self.layout().addWidget(footer_bar)
 
     def _build_prompt_editor(
         self,

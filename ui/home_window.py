@@ -63,29 +63,31 @@ MODES = [
 
 
 # ---------------------------------------------------------------------------
-# Hotkey formatting:  "ctrl+alt+1"  →  "⌃⌥1"
+# Hotkey formatting:  "ctrl+alt+1"  →  "Strg  Alt  1"
 # ---------------------------------------------------------------------------
+# Mirrors the Settings-window HotkeyBadge convention (double-space separator,
+# German modifier labels). Keeps the two visible hotkey surfaces consistent.
 
-_GLYPHS = {
-    "ctrl": "⌃", "control": "⌃",
-    "alt": "⌥", "option": "⌥",
-    "shift": "⇧",
-    "meta": "⊞", "win": "⊞", "cmd": "⌘",
+_LABELS = {
+    "ctrl": "Strg", "control": "Strg",
+    "alt": "Alt", "option": "Alt",
+    "shift": "Umsch",
+    "meta": "Win", "win": "Win", "cmd": "Cmd",
 }
 
 
 def format_hotkey(spec: str) -> str:
-    """Turn ``'ctrl+alt+1'`` into ``'⌃⌥1'`` — Mac-glyph style, no separators."""
+    """Turn ``'ctrl+alt+1'`` into ``'Strg  Alt  1'`` (double-space separated)."""
     if not spec:
         return ""
     parts = [p.strip().lower() for p in spec.replace(" ", "").split("+") if p.strip()]
     out = []
     for p in parts:
-        if p in _GLYPHS:
-            out.append(_GLYPHS[p])
+        if p in _LABELS:
+            out.append(_LABELS[p])
         else:
             out.append(p.upper() if len(p) == 1 else p.capitalize())
-    return "".join(out)
+    return "  ".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -94,19 +96,19 @@ def format_hotkey(spec: str) -> str:
 
 
 class HotkeyPill(QLabel):
-    """Small rounded grey pill that displays a shortcut like ⌃⌥1."""
+    """Small rounded grey pill that displays a shortcut like "Strg Alt 1"."""
 
     def __init__(self, text: str, parent=None):
         super().__init__(text, parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setFixedHeight(22)
-        self.setMinimumWidth(34)
-        # Monospaced number feel, but SF-Pro-ish: fall back cleanly on Windows
-        f = QFont("Segoe UI", 10, QFont.Weight.Medium)
+        self.setMinimumWidth(86)  # fits "Strg  Alt  1"
+        f = QFont("Segoe UI", 9, QFont.Weight.Medium)
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.2)
         self.setFont(f)
         self.setStyleSheet(
             f"QLabel {{ background-color: {HOTKEY_BG}; color: {HOTKEY_FG}; "
-            f"  border-radius: 6px; padding: 0 8px; }}"
+            f"  border-radius: 6px; padding: 0 10px; }}"
         )
 
 
@@ -314,6 +316,15 @@ class HomeWindow(QWidget):
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
+        # Explicitly blit fully-transparent ARGB into every pixel of the widget
+        # BEFORE painting anything. Without this, Windows 11 dark-mode shows
+        # its default dark window background through the parts of the widget
+        # that lie outside the card (the shadow padding area), producing a
+        # black rectangular frame around the grey card. WA_TranslucentBackground
+        # alone is unreliable with frameless tool windows on Win11 dark mode.
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        p.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         card_x = self.SHADOW_PAD
