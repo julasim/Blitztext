@@ -386,7 +386,7 @@ class HomeWindow(QWidget):
         lay.setContentsMargins(0, 16, 0, 12)
         lay.setSpacing(0)
 
-        # --- Header row: "Blitztext" + "by Blackhat" + ⚙ right-aligned ---
+        # --- Header row: "Blitztext" + ⚙ right-aligned ---
         header = QHBoxLayout()
         header.setContentsMargins(18, 0, 14, 0)
         header.setSpacing(6)
@@ -398,11 +398,6 @@ class HomeWindow(QWidget):
         title.setStyleSheet(f"color: {TEXT_STRONG};")
         header.addWidget(title)
 
-        by = QLabel("by Blackhat")
-        byf = QFont("Segoe UI", 9)
-        by.setFont(byf)
-        by.setStyleSheet(f"color: {FAINT};")
-        header.addWidget(by)
         header.addStretch(1)
 
         gear = QPushButton("⚙")

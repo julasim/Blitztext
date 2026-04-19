@@ -190,12 +190,26 @@ class UpdateDialog(QDialog):
         return "".join(out_lines)
 
     def _inline(self, text: str) -> str:
-        """Inline markdown replacements: **bold**, `code`, [link](url)."""
+        """Inline markdown replacements: **bold**, *italic*, `code`, [link](url).
+
+        Bold runs FIRST so its `**…**` markers don't get consumed by the italic
+        rule (which only matches single `*`). The italic regex uses a negative
+        lookaround on ``*`` to be robust even if the text happens to contain
+        unpaired asterisks.
+        """
         import re
-        # Bold
+        # Bold: **text**
         text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
-        # Inline code
-        text = re.sub(r"`(.+?)`", r"<code style='background:#EFEFEF;padding:1px 4px;border-radius:3px;'>\1</code>", text)
+        # Italic: *text*  (after bold so its markers are already gone)
+        text = re.sub(r"(?<!\*)\*(?!\*)([^*\n]+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", text)
+        # Inline code — use a font stack that reliably carries Unicode glyphs
+        # like ⌃⌥⇧ (Cascadia Mono / Consolas / Segoe UI Emoji all cover them).
+        text = re.sub(
+            r"`(.+?)`",
+            r"<code style=\"font-family: 'Cascadia Mono', 'Consolas', 'Segoe UI', monospace; "
+            r"background:#EFEFEF; padding:1px 4px; border-radius:3px;\">\1</code>",
+            text,
+        )
         # Links [text](url)
         text = re.sub(
             r"\[([^\]]+)\]\((https?://[^)]+)\)",
