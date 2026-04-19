@@ -1,19 +1,15 @@
 import httpx
 
+from config.defaults import DEFAULT_PROMPT_MODE2, DEFAULT_PROMPT_MODE3
 
+
+# Fallback prompts, used only when the caller doesn't pass a prompt in (e.g.
+# a test or a plugin bypassing the settings layer). The authoritative source
+# is ``config/defaults.py`` → ``DEFAULTS[llm_prompt_modeN]``, which the user
+# can edit in the Settings window.
 SYSTEM_PROMPTS = {
-    2: (
-        "Du bist ein Textassistent. Der User hat folgenden Text gesprochen. Bereinige ihn: "
-        "Entferne Füllwörter (äh, ähm, halt, sozusagen), korrigiere offensichtliche "
-        "Versprecher, vervollständige abgebrochene Sätze. Der Ton bleibt locker und "
-        "natürlich. Gib NUR den bereinigten Text zurück, keine Erklärungen."
-    ),
-    3: (
-        "Du bist ein professioneller Texter. Der User hat folgenden Text gesprochen. "
-        "Formuliere ihn als professionellen, förmlichen Text um – geeignet für E-Mails "
-        "oder geschäftliche Nachrichten. Behalte den Kerninhalt bei. "
-        "Gib NUR den umformulierten Text zurück, keine Erklärungen."
-    ),
+    2: DEFAULT_PROMPT_MODE2,
+    3: DEFAULT_PROMPT_MODE3,
 }
 
 TIMEOUT = 30.0
@@ -25,12 +21,20 @@ def process_text(
     provider: str,
     api_key: str,
     model: str,
+    system_prompt: str | None = None,
 ) -> str:
-    """Send transcribed text to the selected LLM provider and return the refined text."""
+    """Send transcribed text to the selected LLM provider and return the refined text.
+
+    If ``system_prompt`` is provided (non-empty), it overrides the mode's
+    built-in fallback prompt. Callers in main.py pass the user-edited prompt
+    from the config so the Settings UI has the final word.
+    """
     if mode not in SYSTEM_PROMPTS:
         raise ValueError(f"LLM-Modus {mode} wird nicht unterstützt.")
 
-    system_prompt = SYSTEM_PROMPTS[mode]
+    system_prompt = system_prompt.strip() if system_prompt else ""
+    if not system_prompt:
+        system_prompt = SYSTEM_PROMPTS[mode]
     provider = (provider or "openrouter").lower()
 
     if provider == "openai":

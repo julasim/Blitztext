@@ -261,9 +261,14 @@ class BlitztextApp:
                         "Blitztext", "Kein API-Key gesetzt. Bitte in Einstellungen eintragen."
                     ))
                     return
+                # Per-mode user-edited system prompt (blank → process_text
+                # falls back to the built-in default for that mode).
+                prompt_key = "llm_prompt_mode2" if mode == 2 else "llm_prompt_mode3"
+                custom_prompt = self._cfg.get(prompt_key, "")
                 text = process_text(
                     text, mode, provider, self._api_key,
                     self._cfg.get("llm_model", ""),
+                    system_prompt=custom_prompt,
                 )
                 log(f"LLM returned: {text[:80]!r}")
 

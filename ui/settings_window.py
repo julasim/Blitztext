@@ -1,12 +1,18 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QComboBox, QPushButton, QFrame,
+    QComboBox, QPushButton, QFrame, QPlainTextEdit,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 import keyboard as kb
 
-from config.defaults import PROVIDER_LABELS, PROVIDER_DEFAULT_MODELS, WHISPER_MODELS
+from config.defaults import (
+    PROVIDER_LABELS,
+    PROVIDER_DEFAULT_MODELS,
+    WHISPER_MODELS,
+    DEFAULT_PROMPT_MODE2,
+    DEFAULT_PROMPT_MODE3,
+)
 from config import settings as settings_mod
 
 
@@ -332,6 +338,27 @@ class SettingsWindow(QWidget):
         # Initialize field visibility/placeholders for the current provider
         self._on_provider_changed()
 
+        # --- LLM-PROMPTS ---
+        # Editable system prompts that the LLM receives for modes 2 & 3.
+        # A "Zurücksetzen" button next to each section restores the default.
+        layout.addWidget(_section_label("LLM-PROMPTS"))
+
+        self._prompt2_edit = self._build_prompt_editor(
+            title="Blitztext+",
+            subtitle="Geschrieben sprechen. (Modus 2)",
+            initial=self._config.get("llm_prompt_mode2", DEFAULT_PROMPT_MODE2),
+            default=DEFAULT_PROMPT_MODE2,
+            layout=layout,
+        )
+        layout.addWidget(_hairline())
+        self._prompt3_edit = self._build_prompt_editor(
+            title="Blitztext $%&!",
+            subtitle="Frust rein. Entspannt raus. (Modus 3)",
+            initial=self._config.get("llm_prompt_mode3", DEFAULT_PROMPT_MODE3),
+            default=DEFAULT_PROMPT_MODE3,
+            layout=layout,
+        )
+
         # --- ALLGEMEIN ---
         layout.addWidget(_section_label("ALLGEMEIN"))
 
@@ -388,6 +415,65 @@ class SettingsWindow(QWidget):
         save_btn.clicked.connect(self._save)
         footer.addWidget(save_btn)
         layout.addLayout(footer)
+
+    def _build_prompt_editor(
+        self,
+        title: str,
+        subtitle: str,
+        initial: str,
+        default: str,
+        layout: QVBoxLayout,
+    ) -> QPlainTextEdit:
+        """Append a labelled editable prompt section to ``layout``.
+
+        Returns the QPlainTextEdit so the caller can read its final value in _save().
+        The ``default`` string is captured in the reset-button's closure, so each
+        editor resets to its own mode-specific default.
+        """
+        # Header row: mode title + subtitle on the left, reset button on the right
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 12, 0, 4)
+
+        left = QVBoxLayout()
+        left.setSpacing(1)
+        lbl = QLabel(title)
+        lbl.setFont(QFont("Segoe UI", 12, QFont.Weight.Medium))
+        lbl.setStyleSheet(f"color: {C_TEXT};")
+        left.addWidget(lbl)
+        sub = QLabel(subtitle)
+        sub.setStyleSheet(f"color: {C_MUTED}; font-size: 11px;")
+        left.addWidget(sub)
+        header.addLayout(left)
+        header.addStretch()
+
+        reset_btn = QPushButton("Zurücksetzen")
+        reset_btn.setFixedHeight(26)
+        reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        reset_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {C_SURFACE}; border: 1px solid {C_HAIRLINE}; "
+            f"  border-radius: 6px; color: {C_TEXT}; font-size: 11px; padding: 0 10px; }}"
+            f"QPushButton:hover {{ background-color: {C_SURFACE_H}; border-color: #DDD; }}"
+        )
+        header.addWidget(reset_btn)
+
+        layout.addLayout(header)
+
+        editor = QPlainTextEdit()
+        editor.setPlainText(initial)
+        editor.setFixedHeight(110)
+        editor.setStyleSheet(
+            f"QPlainTextEdit {{ background-color: {C_BG}; border: 1px solid {C_HAIRLINE}; "
+            f"  border-radius: 6px; padding: 8px 10px; color: {C_TEXT}; "
+            f"  font-family: 'Segoe UI'; font-size: 12px; "
+            f"  selection-background-color: {C_TEXT}; selection-color: {C_ON_ACCENT}; }}"
+            f"QPlainTextEdit:focus {{ border-color: #B0B0B0; }}"
+        )
+        layout.addWidget(editor)
+
+        # Bind the default to this specific editor via a closure
+        reset_btn.clicked.connect(lambda _checked=False, e=editor, d=default: e.setPlainText(d))
+
+        return editor
 
     def _hotkey_row(self, title: str, subtitle: str, badge: HotkeyBadge) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -475,6 +561,11 @@ class SettingsWindow(QWidget):
         current = self._current_provider()
         self._key_edits[current] = self._api_key_input.text().strip()
 
+        # If a user empties a prompt field, fall back to the default instead
+        # of sending an empty system prompt to the LLM.
+        prompt2 = self._prompt2_edit.toPlainText().strip() or DEFAULT_PROMPT_MODE2
+        prompt3 = self._prompt3_edit.toPlainText().strip() or DEFAULT_PROMPT_MODE3
+
         lang_map = {"Deutsch": "de", "Englisch": "en", "Automatisch": "auto"}
         result = {
             "hotkey_mode1": self._badge1.hotkey,
@@ -486,6 +577,8 @@ class SettingsWindow(QWidget):
             "language": lang_map.get(self._language_combo.currentText(), "de"),
             "start_with_windows": self._autostart_toggle.enabled,
             "provider_keys": dict(self._key_edits),
+            "llm_prompt_mode2": prompt2,
+            "llm_prompt_mode3": prompt3,
         }
         self.settings_saved.emit(result)
         self.close()
