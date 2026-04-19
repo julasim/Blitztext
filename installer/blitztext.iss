@@ -8,7 +8,7 @@
 ; automatically and dropping Blitztext into its place. Do NOT change this GUID.
 
 #define MyAppName        "Blitztext"
-#define MyAppVersion     "1.0.17"
+#define MyAppVersion     "1.0.18"
 #define MyAppPublisher   "Julius Sima"
 #define MyAppExeName     "Blitztext.exe"
 #define MyAppId          "{{B2FC3A41-7D58-4F82-9F3A-VOICETYPE00001}"

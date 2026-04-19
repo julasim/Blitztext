@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QRect, QRectF, QPoint, QEvent, QSize
 from PyQt6.QtGui import (
     QPainter, QColor, QBrush, QPen, QFont, QLinearGradient, QPainterPath,
-    QKeyEvent, QIcon, QPixmap,
+    QRegion, QKeyEvent, QIcon, QPixmap,
 )
 
 
@@ -226,35 +226,45 @@ class HomeWindow(QWidget):
     open_settings = pyqtSignal()
     quit_app      = pyqtSignal()
 
-    # Outer widget = card + shadow margin (shadow painted inside paintEvent)
-    CARD_W      = 340
-    CARD_H      = 300
-    SHADOW_PAD  = 22
-    WIDTH       = CARD_W + 2 * SHADOW_PAD
-    HEIGHT      = CARD_H + 2 * SHADOW_PAD
+    # Widget size = card size. No outer shadow padding because the
+    # padded translucent area was rendering as a white/grey rectangle
+    # around the card on some Windows 11 setups. Instead we mask the
+    # window to the rounded-rect shape at OS level — only the card
+    # outline reaches the screen regardless of backing-store opacity.
+    CARD_W = 340
+    CARD_H = 300
+    CARD_RADIUS = 14
+    WIDTH  = CARD_W
+    HEIGHT = CARD_H
 
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
         self._config = dict(config)
-        # Set attributes BEFORE window flags — on some Qt/Windows combos the
-        # order matters and setting WA_TranslucentBackground afterwards silently
-        # falls back to opaque (visible as a white/grey rectangle around the
-        # card on a light desktop, or black on dark).
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAutoFillBackground(False)
-        self.setStyleSheet("HomeWindow { background: transparent; }")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
-            | Qt.WindowType.NoDropShadowWindowHint  # we draw our own
+            | Qt.WindowType.NoDropShadowWindowHint
         )
         self.setFixedSize(self.WIDTH, self.HEIGHT)
+        self._apply_shape_mask()
 
         self._build_ui()
         self._status = "idle"
         self.set_state(self._status)
+
+    def _apply_shape_mask(self) -> None:
+        """OS-level rounded-rect clip. Pixels outside the card outline are
+        never rendered by the compositor — guarantees no visible frame."""
+        path = QPainterPath()
+        path.addRoundedRect(
+            0.0, 0.0, float(self.WIDTH), float(self.HEIGHT),
+            float(self.CARD_RADIUS), float(self.CARD_RADIUS),
+        )
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
     # -- Public API --------------------------------------------------------
 
@@ -293,10 +303,11 @@ class HomeWindow(QWidget):
         else:
             # Center horizontally over the anchor; but keep inside screen
             x = anchor.center().x() - self.width() // 2
-            y = anchor.top() - self.height() + self.SHADOW_PAD
+            # Hover a small gap above the anchor (tray icon)
+            y = anchor.top() - self.height() - 8
             # If anchor is at the top of the screen (unusual), show below instead
             if y < screen_rect.top():
-                y = anchor.bottom() + 4 - self.SHADOW_PAD
+                y = anchor.bottom() + 8
         x = max(screen_rect.left() + 4, min(x, screen_rect.right() - self.width() - 4))
         y = max(screen_rect.top() + 4,  min(y, screen_rect.bottom() - self.height() - 4))
         self.move(x, y)
@@ -322,49 +333,23 @@ class HomeWindow(QWidget):
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
-        # Explicitly blit fully-transparent ARGB into every pixel of the widget
-        # BEFORE painting anything. Without this, Windows 11 dark-mode shows
-        # its default dark window background through the parts of the widget
-        # that lie outside the card (the shadow padding area), producing a
-        # black rectangular frame around the grey card. WA_TranslucentBackground
-        # alone is unreliable with frameless tool windows on Win11 dark mode.
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
         p.fillRect(self.rect(), Qt.GlobalColor.transparent)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        card_x = self.SHADOW_PAD
-        card_y = self.SHADOW_PAD
-        card_rect = QRectF(card_x, card_y, self.CARD_W, self.CARD_H)
-        radius = 14.0
+        card_rect = QRectF(0, 0, self.CARD_W, self.CARD_H)
+        radius = float(self.CARD_RADIUS)
 
-        # --- Manually painted soft drop shadow (10 concentric rounded rects) ---
-        p.setPen(Qt.PenStyle.NoPen)
-        shadow_steps = 10
-        max_blur = 18.0
-        offset_y = 6
-        for i in range(shadow_steps, 0, -1):
-            t = i / shadow_steps               # 1 → 0
-            grow = max_blur * t
-            alpha = int(4 + 18 * (1 - t))      # outer ~4, inner ~22
-            p.setBrush(QBrush(QColor(*SHADOW_COLOR, alpha)))
-            rr = QRectF(
-                card_x - grow,
-                card_y - grow + offset_y,
-                self.CARD_W + 2 * grow,
-                self.CARD_H + 2 * grow,
-            )
-            p.drawRoundedRect(rr, radius + grow, radius + grow)
-
-        # --- Card background: subtle vertical gradient ---
-        grad = QLinearGradient(card_x, card_y, card_x, card_y + self.CARD_H)
+        # Card background: subtle vertical gradient.
+        grad = QLinearGradient(0, 0, 0, self.CARD_H)
         grad.setColorAt(0.0, BG_TOP)
         grad.setColorAt(1.0, BG_BOTTOM)
         p.setBrush(QBrush(grad))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawRoundedRect(card_rect, radius, radius)
 
-        # Hairline border
+        # Hairline border gives the card definition without needing a shadow.
         pen = QPen(BORDER, 1.0)
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
@@ -376,19 +361,10 @@ class HomeWindow(QWidget):
     # -- UI composition ----------------------------------------------------
 
     def _build_ui(self) -> None:
-        # Outer layout lives entirely inside the card rect (offset by SHADOW_PAD)
-        root = QVBoxLayout(self)
-        root.setContentsMargins(
-            self.SHADOW_PAD, self.SHADOW_PAD,
-            self.SHADOW_PAD, self.SHADOW_PAD,
-        )
-        root.setSpacing(0)
-
-        card = QFrame(self)
-        card.setStyleSheet("QFrame { background: transparent; }")
-        root.addWidget(card)
-
-        lay = QVBoxLayout(card)
+        # Widget IS the card now, so the layout fills it directly — no
+        # shadow-padding margins. The paintEvent draws the gradient and
+        # hairline border, then Qt composes the child widgets on top.
+        lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 16, 0, 12)
         lay.setSpacing(0)
 

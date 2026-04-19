@@ -3,28 +3,32 @@ import random
 import time
 
 from PyQt6.QtWidgets import QWidget, QApplication
-from PyQt6.QtCore import Qt, QTimer, QRectF
-from PyQt6.QtGui import QPainter, QColor, QBrush, QFont, QLinearGradient, QPen
+from PyQt6.QtCore import Qt, QTimer, QRectF, QRect
+from PyQt6.QtGui import (
+    QPainter, QColor, QBrush, QFont, QLinearGradient, QPen,
+    QPainterPath, QRegion,
+)
 
 
 class RecordingOverlay(QWidget):
     """Minimal pill-shaped overlay: smoothly animated audio bars + timer.
 
-    The bar values ease toward a rolling target, giving a soft, premium feel.
+    The widget rectangle is EXACTLY the pill size (no outer shadow padding),
+    and a QRegion mask carved from a rounded-rect QPainterPath constrains
+    the OS-level window shape so only the pill outline reaches the screen.
+    Previous versions padded the widget for a soft painted shadow, but on
+    some Windows 11 setups the padding area stayed opaque white/grey
+    despite WA_TranslucentBackground — producing a visible frame around
+    the pill. Shape-masking the window side-steps the translucent-backing
+    issue entirely.
     """
 
     # --- Layout ---
-    # Pill dimensions (the visible black capsule) — compact & discreet
+    # Pill = widget. No padding, no painted shadow.
     PILL_W = 84
     PILL_H = 20
-    # Outer widget adds margin so we can paint a soft shadow around the pill
-    # without relying on QGraphicsDropShadowEffect, which breaks repaint
-    # invalidation on WA_TranslucentBackground top-level windows (Qt/Windows).
-    SHADOW_PAD_X = 14
-    SHADOW_PAD_TOP = 8
-    SHADOW_PAD_BOTTOM = 16  # extra to accommodate the downward offset
-    WIDTH = PILL_W + 2 * SHADOW_PAD_X
-    HEIGHT = PILL_H + SHADOW_PAD_TOP + SHADOW_PAD_BOTTOM
+    WIDTH = PILL_W
+    HEIGHT = PILL_H
 
     BAR_COUNT = 4
     BAR_WIDTH = 1.4
@@ -40,23 +44,19 @@ class RecordingOverlay(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Attributes must be set BEFORE window flags on some Qt/Windows combos,
-        # otherwise WA_TranslucentBackground silently falls back to opaque
-        # (visible as a white/grey rectangle behind the pill on a light
-        # desktop, or black on dark desktop).
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAutoFillBackground(False)
-        self.setStyleSheet("background: transparent;")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
             | Qt.WindowType.WindowTransparentForInput
-            | Qt.WindowType.NoDropShadowWindowHint   # no native chrome — we paint our own shadow
+            | Qt.WindowType.NoDropShadowWindowHint
         )
         self.setFixedSize(self.WIDTH, self.HEIGHT)
+        self._apply_shape_mask()
 
         self._start_time = 0.0
         self._current = [0.35] * self.BAR_COUNT
@@ -72,6 +72,18 @@ class RecordingOverlay(QWidget):
         self._target_timer.timeout.connect(self._pick_new_targets)
 
     # --- Lifecycle ---
+
+    def _apply_shape_mask(self) -> None:
+        """Clip the window to the pill outline at the OS compositor level.
+
+        QRegion doesn't antialias, but for a pill with very short straight
+        sections and full-half-circle ends the rasterised polygon is
+        visually indistinguishable from the painted antialiased fill.
+        """
+        radius = self.PILL_H / 2
+        path = QPainterPath()
+        path.addRoundedRect(0.0, 0.0, float(self.WIDTH), float(self.HEIGHT), radius, radius)
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
     def show_overlay(self) -> None:
         screen = QApplication.primaryScreen().availableGeometry()
@@ -104,8 +116,6 @@ class RecordingOverlay(QWidget):
             self._target[i] = min(1.0, base + (0.25 if spike else 0.0))
 
     def _tick(self) -> None:
-        # Ease each bar toward its target; add a tiny sine-wave breath per bar
-        t = time.time()
         for i in range(self.BAR_COUNT):
             self._phases[i] += 0.12
             breath = 0.04 * math.sin(self._phases[i])
@@ -117,49 +127,24 @@ class RecordingOverlay(QWidget):
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
-        # Explicitly clear to transparent so Windows 11 dark-mode never bleeds
-        # through the shadow padding. Belt-and-suspenders with WA_TranslucentBackground.
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
         p.fillRect(self.rect(), Qt.GlobalColor.transparent)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Pill rect, offset inside the padded widget
-        pill_x = self.SHADOW_PAD_X
-        pill_y = self.SHADOW_PAD_TOP
-        pill_rect = QRectF(pill_x, pill_y, self.PILL_W, self.PILL_H)
-        radius = self.PILL_H / 2  # full pill
+        pill_rect = QRectF(0, 0, self.PILL_W, self.PILL_H)
+        radius = self.PILL_H / 2
 
-        # --- Soft drop shadow (manual — 6 concentric rounded rects with
-        # decreasing alpha; softer + tighter for the compact pill) ---
-        p.setPen(Qt.PenStyle.NoPen)
-        shadow_steps = 6
-        shadow_offset_y = 3
-        max_blur = 7.0  # how far the shadow extends outward from the pill
-        for i in range(shadow_steps, 0, -1):
-            t = i / shadow_steps  # 1 (outermost) → 0
-            grow = max_blur * t
-            alpha = int(6 + 18 * (1 - t))  # outer ring ~6, inner ring ~24
-            p.setBrush(QBrush(QColor(0, 0, 0, alpha)))
-            shadow_rect = QRectF(
-                pill_x - grow,
-                pill_y - grow + shadow_offset_y,
-                self.PILL_W + 2 * grow,
-                self.PILL_H + 2 * grow,
-            )
-            r = radius + grow
-            p.drawRoundedRect(shadow_rect, r, r)
-
-        # Subtle top-to-bottom gradient — deep near-black, a touch more transparent
-        grad = QLinearGradient(pill_x, pill_y, pill_x, pill_y + self.PILL_H)
-        grad.setColorAt(0.0, QColor(28, 28, 30, 210))
-        grad.setColorAt(1.0, QColor(14, 14, 16, 210))
+        # Subtle top-to-bottom gradient — deep near-black, lightly translucent
+        grad = QLinearGradient(0, 0, 0, self.PILL_H)
+        grad.setColorAt(0.0, QColor(28, 28, 30, 230))
+        grad.setColorAt(1.0, QColor(14, 14, 16, 230))
         p.setBrush(QBrush(grad))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawRoundedRect(pill_rect, radius, radius)
 
         # Hairline highlight at the very top (glass edge)
-        pen = QPen(QColor(255, 255, 255, 18), 1.0)
+        pen = QPen(QColor(255, 255, 255, 22), 1.0)
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRoundedRect(pill_rect.adjusted(0.5, 0.5, -0.5, -0.5), radius - 0.5, radius - 0.5)
@@ -169,8 +154,8 @@ class RecordingOverlay(QWidget):
         p.setBrush(QBrush(bar_color))
         p.setPen(Qt.PenStyle.NoPen)
 
-        cy = pill_y + self.PILL_H / 2
-        x = pill_x + self.PADDING_X
+        cy = self.PILL_H / 2
+        x = self.PADDING_X
 
         for h_frac in self._current:
             bar_h = self.BAR_MIN_H + h_frac * (self.BAR_MAX_H - self.BAR_MIN_H)
@@ -188,12 +173,12 @@ class RecordingOverlay(QWidget):
         time_text = f"{minutes}:{seconds:02d}"
 
         p.setPen(QColor(220, 220, 224))
-        font = QFont("Segoe UI", 10, QFont.Weight.Medium)
-        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.6)
+        font = QFont("Segoe UI", 9, QFont.Weight.Medium)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.4)
         p.setFont(font)
-        text_left = x + 8
-        text_right = pill_x + self.PILL_W - self.PADDING_X
-        text_rect = QRectF(text_left, pill_y, text_right - text_left, self.PILL_H)
+        text_left = x + 6
+        text_right = self.PILL_W - self.PADDING_X
+        text_rect = QRectF(text_left, 0, text_right - text_left, self.PILL_H)
         p.drawText(
             text_rect,
             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
