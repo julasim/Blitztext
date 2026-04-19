@@ -14,24 +14,24 @@ class RecordingOverlay(QWidget):
     """
 
     # --- Layout ---
-    # Pill dimensions (the visible black capsule)
-    PILL_W = 116
-    PILL_H = 30
+    # Pill dimensions (the visible black capsule) — compact & discreet
+    PILL_W = 84
+    PILL_H = 20
     # Outer widget adds margin so we can paint a soft shadow around the pill
     # without relying on QGraphicsDropShadowEffect, which breaks repaint
     # invalidation on WA_TranslucentBackground top-level windows (Qt/Windows).
-    SHADOW_PAD_X = 18
-    SHADOW_PAD_TOP = 10
-    SHADOW_PAD_BOTTOM = 22  # extra to accommodate the 4px downward offset
+    SHADOW_PAD_X = 14
+    SHADOW_PAD_TOP = 8
+    SHADOW_PAD_BOTTOM = 16  # extra to accommodate the downward offset
     WIDTH = PILL_W + 2 * SHADOW_PAD_X
     HEIGHT = PILL_H + SHADOW_PAD_TOP + SHADOW_PAD_BOTTOM
 
-    BAR_COUNT = 5
-    BAR_WIDTH = 2.0
-    BAR_GAP = 4
-    BAR_MIN_H = 4
-    BAR_MAX_H = 16
-    PADDING_X = 14
+    BAR_COUNT = 4
+    BAR_WIDTH = 1.4
+    BAR_GAP = 3
+    BAR_MIN_H = 2
+    BAR_MAX_H = 10
+    PADDING_X = 10
 
     # --- Animation ---
     FRAME_MS = 16            # ~60 fps
@@ -117,16 +117,16 @@ class RecordingOverlay(QWidget):
         pill_rect = QRectF(pill_x, pill_y, self.PILL_W, self.PILL_H)
         radius = self.PILL_H / 2  # full pill
 
-        # --- Soft drop shadow (manual — 8 concentric rounded rects with
-        # decreasing alpha to emulate a ~36px blur, offset 4px down) ---
+        # --- Soft drop shadow (manual — 6 concentric rounded rects with
+        # decreasing alpha; softer + tighter for the compact pill) ---
         p.setPen(Qt.PenStyle.NoPen)
-        shadow_steps = 8
-        shadow_offset_y = 4
-        max_blur = 10.0  # how far the shadow extends outward from the pill
+        shadow_steps = 6
+        shadow_offset_y = 3
+        max_blur = 7.0  # how far the shadow extends outward from the pill
         for i in range(shadow_steps, 0, -1):
             t = i / shadow_steps  # 1 (outermost) → 0
             grow = max_blur * t
-            alpha = int(10 + 22 * (1 - t))  # outer ring ~10, inner ring ~32
+            alpha = int(6 + 18 * (1 - t))  # outer ring ~6, inner ring ~24
             p.setBrush(QBrush(QColor(0, 0, 0, alpha)))
             shadow_rect = QRectF(
                 pill_x - grow,
@@ -137,10 +137,10 @@ class RecordingOverlay(QWidget):
             r = radius + grow
             p.drawRoundedRect(shadow_rect, r, r)
 
-        # Subtle top-to-bottom gradient — deep near-black
+        # Subtle top-to-bottom gradient — deep near-black, a touch more transparent
         grad = QLinearGradient(pill_x, pill_y, pill_x, pill_y + self.PILL_H)
-        grad.setColorAt(0.0, QColor(28, 28, 30, 240))
-        grad.setColorAt(1.0, QColor(14, 14, 16, 240))
+        grad.setColorAt(0.0, QColor(28, 28, 30, 210))
+        grad.setColorAt(1.0, QColor(14, 14, 16, 210))
         p.setBrush(QBrush(grad))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawRoundedRect(pill_rect, radius, radius)

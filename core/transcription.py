@@ -35,7 +35,7 @@ class Transcriber:
 
         if models_dir is None:
             appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
-            self._models_dir = os.path.join(appdata, "VoiceType", "models")
+            self._models_dir = os.path.join(appdata, "Blitztext", "models")
         else:
             self._models_dir = models_dir
         os.makedirs(self._models_dir, exist_ok=True)

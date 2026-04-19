@@ -19,7 +19,7 @@ class DownloadDialog(QDialog):
 
     def __init__(self, model_name: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("VoiceType")
+        self.setWindowTitle("Blitztext")
         self.setFixedSize(480, 180)
         self.setWindowFlags(
             Qt.WindowType.Dialog

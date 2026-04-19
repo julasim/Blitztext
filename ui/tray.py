@@ -1,11 +1,14 @@
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush
-from PyQt6.QtCore import pyqtSignal, QObject, QRectF, Qt
+from PyQt6.QtCore import pyqtSignal, QObject, QRectF, QRect, Qt
 
 
 class TraySignals(QObject):
     open_settings = pyqtSignal()
     quit_app = pyqtSignal()
+    # Left-click on the tray icon → open the home popup.
+    # QRect payload is the icon's screen rect, used to anchor the window above it.
+    open_home = pyqtSignal(QRect)
 
 
 class SystemTray:
@@ -24,7 +27,19 @@ class SystemTray:
 
         self._set_icon("idle")
         self._build_menu()
+        # Route every icon activation: left-click → home popup, right-click
+        # keeps falling through to the built-in QMenu context-menu behaviour.
+        self._tray.activated.connect(self._on_activated)
         self._tray.show()
+
+    def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        # Trigger = single left click; DoubleClick for users with the Windows
+        # "double-click to open" setting. Context (right-click) is handled by Qt.
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self.signals.open_home.emit(self._tray.geometry())
 
     def _create_mic_icon(self, state: str) -> QIcon:
         size = 64
@@ -86,11 +101,11 @@ class SystemTray:
         icon = self._create_mic_icon(state)
         self._tray.setIcon(icon)
         labels = {
-            "idle": "VoiceType",
-            "recording": "VoiceType – Aufnahme",
-            "processing": "VoiceType – Verarbeitung",
+            "idle": "Blitztext",
+            "recording": "Blitztext – Aufnahme",
+            "processing": "Blitztext – Verarbeitung",
         }
-        self._tray.setToolTip(labels.get(state, "VoiceType"))
+        self._tray.setToolTip(labels.get(state, "Blitztext"))
 
     def _build_menu(self) -> None:
         menu = QMenu()

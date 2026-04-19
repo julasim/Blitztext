@@ -1,4 +1,4 @@
-"""VoiceType – Speech-to-text with one hotkey."""
+"""Blitztext – Speech-to-text with one hotkey."""
 
 import os
 import sys
@@ -13,6 +13,12 @@ os.environ.setdefault("HF_XET_ENABLED", "0")
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
+
+# Run one-time rename migrations (AppData folder, keyring service, autostart
+# registry value) BEFORE the log module or settings are touched, so the very
+# first read/write already lands under the new Blitztext names.
+from core.migration import migrate_all as _migrate_all
+_migrate_all()
 
 import atexit
 import threading
@@ -30,6 +36,7 @@ from core.llm import process_text
 from core.updater import check_for_update, CURRENT_VERSION
 from core.update_installer import download_installer, launch_installer_and_quit
 from ui.tray import SystemTray
+from ui.home_window import HomeWindow
 from ui.settings_window import SettingsWindow
 from ui.download_dialog import DownloadDialog
 from ui.recording_overlay import RecordingOverlay
@@ -58,13 +65,13 @@ class _MainThreadInvoker(QObject):
         self._call.emit(fn)
 
 
-class VoiceTypeApp:
+class BlitztextApp:
     def __init__(self):
         reset_log()
         log(f"App init — frozen={getattr(sys, 'frozen', False)} exe={sys.executable}")
         self._app = QApplication(sys.argv)
         self._app.setQuitOnLastWindowClosed(False)
-        self._app.setApplicationName("VoiceType")
+        self._app.setApplicationName("Blitztext")
 
         # Must be created on the main (GUI) thread — used for all cross-thread UI calls.
         self._invoker = _MainThreadInvoker()
@@ -89,10 +96,16 @@ class VoiceTypeApp:
         self._tray = SystemTray(self._app)
         self._tray.signals.open_settings.connect(self._open_settings)
         self._tray.signals.quit_app.connect(self._quit)
+        self._tray.signals.open_home.connect(self._open_home)
 
         self._settings_window: SettingsWindow | None = None
         self._download_dialog: DownloadDialog | None = None
         self._recording_overlay = RecordingOverlay()
+
+        # Home popup — shown on tray left-click. One instance, reused across opens.
+        self._home_window = HomeWindow(self._cfg)
+        self._home_window.open_settings.connect(self._open_settings)
+        self._home_window.quit_app.connect(self._quit)
 
         self._processing = False
         self._processing_lock = threading.Lock()
@@ -150,7 +163,7 @@ class VoiceTypeApp:
                 log(f"Model load FAILED: {type(e).__name__}: {e}")
                 self._invoke_main(lambda: self._on_model_error(str(e)))
 
-        self._tray.set_state("processing")
+        self._set_state("processing")
         threading.Thread(target=do_load, daemon=True).start()
 
     def _close_download_dialog(self) -> None:
@@ -163,13 +176,13 @@ class VoiceTypeApp:
 
     def _on_model_loaded(self) -> None:
         self._close_download_dialog()
-        self._tray.set_state("idle")
-        self._tray.show_message("VoiceType", "Bereit! Whisper-Modell geladen.")
+        self._set_state("idle")
+        self._tray.show_message("Blitztext", "Bereit! Whisper-Modell geladen.")
 
     def _on_model_error(self, error: str) -> None:
         self._close_download_dialog()
-        self._tray.set_state("idle")
-        self._tray.show_message("VoiceType – Fehler", f"Whisper-Modell konnte nicht geladen werden:\n{error}")
+        self._set_state("idle")
+        self._tray.show_message("Blitztext – Fehler", f"Whisper-Modell konnte nicht geladen werden:\n{error}")
 
     def _register_hotkeys(self) -> None:
         h1 = self._cfg.get("hotkey_mode1", "ctrl+alt+1")
@@ -186,7 +199,7 @@ class VoiceTypeApp:
             log("  → ignoring, model not loaded yet")
             self._hotkey_listener._reset_active_mode()
             self._invoke_main(lambda: self._tray.show_message(
-                "VoiceType", "Sprachmodell wird noch geladen. Bitte warten bis der Download fertig ist.",
+                "Blitztext", "Sprachmodell wird noch geladen. Bitte warten bis der Download fertig ist.",
             ))
             return
         # Warn up-front if LLM modes lack an API key, so user doesn't waste a recording
@@ -194,7 +207,7 @@ class VoiceTypeApp:
             log(f"  → ignoring, no API key for mode {mode}")
             self._hotkey_listener._reset_active_mode()
             self._invoke_main(lambda: self._tray.show_message(
-                "VoiceType", "Kein API-Key gesetzt. Bitte in Einstellungen eintragen.",
+                "Blitztext", "Kein API-Key gesetzt. Bitte in Einstellungen eintragen.",
             ))
             return
         with self._processing_lock:
@@ -204,10 +217,10 @@ class VoiceTypeApp:
             self._recorder.start()
         except Exception as e:
             self._invoke_main(lambda: self._tray.show_message(
-                "VoiceType – Fehler", str(e),
+                "Blitztext – Fehler", str(e),
             ))
             return
-        self._invoke_main(lambda: self._tray.set_state("recording"))
+        self._invoke_main(lambda: self._set_state("recording"))
         self._invoke_main(self._recording_overlay.show_overlay)
 
     def _on_recording_stop(self, mode: int) -> None:
@@ -219,9 +232,9 @@ class VoiceTypeApp:
         rms = float(_np.sqrt(_np.mean(audio ** 2))) if audio.size > 0 else 0.0
         log(f"Audio captured: {audio.size} samples ({audio.size/16000:.1f}s)  peak={peak:.3f}  rms={rms:.3f}")
         if audio.size == 0:
-            self._invoke_main(lambda: self._tray.set_state("idle"))
+            self._invoke_main(lambda: self._set_state("idle"))
             self._invoke_main(lambda: self._tray.show_message(
-                "VoiceType", "Aufnahme war zu kurz oder leer.",
+                "Blitztext", "Aufnahme war zu kurz oder leer.",
             ))
             return
         threading.Thread(target=self._process_audio, args=(audio, mode), daemon=True).start()
@@ -229,14 +242,14 @@ class VoiceTypeApp:
     def _process_audio(self, audio, mode: int) -> None:
         with self._processing_lock:
             self._processing = True
-        self._invoke_main(lambda: self._tray.set_state("processing"))
+        self._invoke_main(lambda: self._set_state("processing"))
         try:
             log(f"Transcribing {audio.size} samples …")
             text = self._transcriber.transcribe(audio)
             log(f"Transcribed: {text!r}")
             if not text:
                 self._invoke_main(lambda: self._tray.show_message(
-                    "VoiceType", "Keine Sprache erkannt.",
+                    "Blitztext", "Keine Sprache erkannt.",
                 ))
                 return
 
@@ -245,7 +258,7 @@ class VoiceTypeApp:
                 log(f"LLM mode {mode} via {provider} (key set: {bool(self._api_key)})")
                 if not self._api_key:
                     self._invoke_main(lambda: self._tray.show_message(
-                        "VoiceType", "Kein API-Key gesetzt. Bitte in Einstellungen eintragen."
+                        "Blitztext", "Kein API-Key gesetzt. Bitte in Einstellungen eintragen."
                     ))
                     return
                 text = process_text(
@@ -260,11 +273,36 @@ class VoiceTypeApp:
         except Exception as e:
             log_exc("_process_audio failed")
             err = str(e)
-            self._invoke_main(lambda: self._tray.show_message("VoiceType – Fehler", err))
+            self._invoke_main(lambda: self._tray.show_message("Blitztext – Fehler", err))
         finally:
             with self._processing_lock:
                 self._processing = False
-            self._invoke_main(lambda: self._tray.set_state("idle"))
+            self._invoke_main(lambda: self._set_state("idle"))
+
+    def _open_home(self, anchor) -> None:
+        """Tray left-click → position & show the home popup near the tray icon."""
+        try:
+            self._home_window.set_state(self._home_status())
+            self._home_window.show_near(anchor)
+        except Exception as e:
+            log(f"_open_home failed: {type(e).__name__}: {e}")
+
+    def _home_status(self) -> str:
+        """Map internal state to the status shown in the home window."""
+        if self._processing:
+            return "processing"
+        if not self._transcriber.is_loaded:
+            return "loading"
+        return "idle"
+
+    def _set_state(self, state: str) -> None:
+        """Update tray icon AND home window status in one shot (main thread)."""
+        self._tray.set_state(state)
+        try:
+            self._home_window.set_state(state)
+        except Exception:
+            # Home window not ready yet (early startup) — tray is enough.
+            pass
 
     def _open_settings(self) -> None:
         try:
@@ -296,6 +334,8 @@ class VoiceTypeApp:
         self._transcriber.set_language(self._cfg.get("language", "de"))
         settings.set_autostart(self._cfg.get("start_with_windows", True))
         self._register_hotkeys()
+        # Push new hotkey labels into the home window
+        self._home_window.set_config(self._cfg)
 
         # If the Whisper model changed, reload it (shows download dialog if needed)
         new_model = self._cfg.get("whisper_model")
@@ -360,7 +400,7 @@ class VoiceTypeApp:
 
 
 def main():
-    app = VoiceTypeApp()
+    app = BlitztextApp()
     sys.exit(app.run())
 
 

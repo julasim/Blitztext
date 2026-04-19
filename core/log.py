@@ -1,4 +1,4 @@
-"""Tiny rolling log file in %APPDATA%\\VoiceType\\voicetype.log for post-mortem diagnostics."""
+"""Tiny rolling log file in %APPDATA%\\Blitztext\\blitztext.log for post-mortem diagnostics."""
 
 import os
 import threading
@@ -14,9 +14,9 @@ def _path() -> str:
     global _PATH
     if _PATH is None:
         appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
-        folder = os.path.join(appdata, "VoiceType")
+        folder = os.path.join(appdata, "Blitztext")
         os.makedirs(folder, exist_ok=True)
-        _PATH = os.path.join(folder, "voicetype.log")
+        _PATH = os.path.join(folder, "blitztext.log")
     return _PATH
 
 
@@ -43,6 +43,6 @@ def reset() -> None:
     try:
         with _LOCK:
             with open(_path(), "w", encoding="utf-8") as f:
-                f.write(f"=== VoiceType log started {datetime.now().isoformat()} ===\n")
+                f.write(f"=== Blitztext log started {datetime.now().isoformat()} ===\n")
     except Exception:
         pass

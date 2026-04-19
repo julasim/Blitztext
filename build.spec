@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 # Build with:  pyinstaller build.spec
-# Produces:    dist/VoiceType/VoiceType.exe  (+ supporting files)
-# Then wrap:   iscc installer/voicetype.iss
+# Produces:    dist/Blitztext/Blitztext.exe  (+ supporting files)
+# Then wrap:   iscc installer/blitztext.iss
 
 from PyInstaller.utils.hooks import collect_data_files
 
@@ -41,7 +41,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,        # <-- key change: don't bundle into single file
-    name='VoiceType',
+    name='Blitztext',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -62,5 +62,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='VoiceType',             # produces dist/VoiceType/
+    name='Blitztext',             # produces dist/Blitztext/
 )

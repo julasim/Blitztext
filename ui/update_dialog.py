@@ -29,7 +29,7 @@ class UpdateDialog(QDialog):
 
     def __init__(self, new_version: str, current_version: str, notes: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("VoiceType")
+        self.setWindowTitle("Blitztext")
         self.setFixedSize(520, 460)
         self.setWindowFlags(
             Qt.WindowType.Dialog
@@ -65,7 +65,7 @@ class UpdateDialog(QDialog):
         layout.addSpacing(8)
 
         # Title
-        title = QLabel(f"VoiceType {new_version}")
+        title = QLabel(f"Blitztext {new_version}")
         tf = QFont("Segoe UI", 18, QFont.Weight.DemiBold)
         tf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, -0.3)
         title.setFont(tf)

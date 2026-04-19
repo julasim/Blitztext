@@ -1,4 +1,4 @@
-# VoiceType – Build & Release
+# Blitztext – Build & Release
 
 Dieses Dokument beschreibt, wie du aus dem Source-Code einen Windows-Installer baust
 und als neues Release auf GitHub veröffentlichst.
@@ -42,23 +42,23 @@ GITHUB_REPO = "DEIN-NAME/voicetype"
 In beiden Dateien dieselbe neue Version eintragen:
 
 - `core/updater.py`: `CURRENT_VERSION = "1.1.0"`
-- `installer/voicetype.iss`: `#define MyAppVersion "1.1.0"`
+- `installer/blitztext.iss`: `#define MyAppVersion "1.1.0"`
 
 ### 2. Installer bauen
 
 ```bash
-# Schritt 1: Python-Code bündeln → dist/VoiceType/
+# Schritt 1: Python-Code bündeln → dist/Blitztext/
 pyinstaller build.spec
 
-# Schritt 2: Installer bauen → dist-installer/VoiceType-Setup-1.1.0.exe
-iscc installer/voicetype.iss
+# Schritt 2: Installer bauen → dist-installer/Blitztext-Setup-1.1.0.exe
+iscc installer/blitztext.iss
 ```
 
-Ergebnis: `dist-installer/VoiceType-Setup-1.1.0.exe` (~200–300 MB inkl. aller
+Ergebnis: `dist-installer/Blitztext-Setup-1.1.0.exe` (~200–300 MB inkl. aller
 Python-Dependencies und PyQt6).
 
 > Das Whisper-Modell ist **nicht** im Installer — es wird beim ersten Start der App
-> heruntergeladen und in `%APPDATA%\VoiceType\models\` abgelegt. Dadurch bleibt der
+> heruntergeladen und in `%APPDATA%\Blitztext\models\` abgelegt. Dadurch bleibt der
 > Installer schlank und Modell-Updates sind unabhängig von App-Updates.
 
 ### 3. Lokal testen
@@ -98,21 +98,21 @@ Option A — über die Web-UI:
    - Clipboard-Race-Condition gefixt
    ```
 
-5. "Attach binaries" → `VoiceType-Setup-1.1.0.exe` hochladen
+5. "Attach binaries" → `Blitztext-Setup-1.1.0.exe` hochladen
 6. "Publish release"
 
 Option B — per CLI (`gh` GitHub CLI):
 
 ```bash
 gh release create v1.1.0 \
-  dist-installer/VoiceType-Setup-1.1.0.exe \
+  dist-installer/Blitztext-Setup-1.1.0.exe \
   --title "v1.1.0" \
   --notes-file RELEASE_NOTES.md
 ```
 
 ### 6. Fertig
 
-Beim nächsten Start von VoiceType bei deinen Usern:
+Beim nächsten Start von Blitztext bei deinen Usern:
 
 1. Die App fragt die GitHub-Releases-API ab
 2. Sie erkennt `1.1.0 > 1.0.0`
@@ -120,21 +120,21 @@ Beim nächsten Start von VoiceType bei deinen Usern:
 4. Klick auf "Jetzt updaten":
    - Der Installer wird nach `%TEMP%` geladen (Progress-Balken im Dialog)
    - Installer startet im Silent-Modus
-   - VoiceType beendet sich selbst
-   - Installer ersetzt die Dateien in `Program Files\VoiceType\`
-   - Der neue Installer startet die neue VoiceType-Version automatisch
+   - Blitztext beendet sich selbst
+   - Installer ersetzt die Dateien in `Program Files\Blitztext\`
+   - Der neue Installer startet die neue Blitztext-Version automatisch
 
 ---
 
 ## Was die Deinstallation entfernt
 
 **Immer:**
-- Alle Programmdateien unter `C:\Program Files\VoiceType\`
+- Alle Programmdateien unter `C:\Program Files\Blitztext\`
 - Start-Menü-Eintrag und Desktop-Verknüpfung (falls erstellt)
 - Autostart-Registry-Eintrag
 
 **Optional (User wird gefragt):**
-- Benutzerdaten unter `%APPDATA%\VoiceType\` (Config + Whisper-Modell ~1,5 GB)
+- Benutzerdaten unter `%APPDATA%\Blitztext\` (Config + Whisper-Modell ~1,5 GB)
 - Alle gespeicherten API-Keys im Windows-Anmeldeinformationsmanager
 
 ---
@@ -146,4 +146,4 @@ Beim nächsten Start von VoiceType bei deinen Usern:
 | `iscc` nicht gefunden | Inno Setup 6 installieren und `C:\Program Files (x86)\Inno Setup 6\` zur PATH hinzufügen |
 | SmartScreen-Warnung beim Installer | Normal, solange der Installer nicht mit Code-Signing-Zertifikat signiert ist. User muss "Weitere Informationen" → "Trotzdem ausführen" klicken |
 | Update-Dialog erscheint nicht | Prüfen: `GITHUB_REPO` richtig gesetzt? Release als "Published" (nicht "Draft")? `.exe` als Asset hochgeladen? |
-| Installer startet VoiceType nicht automatisch nach Update | Stellen sicher, dass in `voicetype.iss` unter `[Run]` kein `skipifsilent`-Flag gesetzt ist |
+| Installer startet Blitztext nicht automatisch nach Update | Stellen sicher, dass in `blitztext.iss` unter `[Run]` kein `skipifsilent`-Flag gesetzt ist |

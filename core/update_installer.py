@@ -1,5 +1,5 @@
 """Download the new installer and launch it. The installer will stop the running
-VoiceType, replace the files, and start the fresh version automatically.
+Blitztext, replace the files, and start the fresh version automatically.
 """
 
 import os
@@ -21,7 +21,7 @@ def download_installer(
     progress_callback(bytes_done, bytes_total) is called during the download.
     The temp file is removed if the download fails.
     """
-    fd, path = tempfile.mkstemp(prefix="VoiceType-Setup-", suffix=".exe")
+    fd, path = tempfile.mkstemp(prefix="Blitztext-Setup-", suffix=".exe")
     os.close(fd)
 
     try:
@@ -53,7 +53,7 @@ def launch_installer_and_quit(installer_path: str) -> None:
     """Start the installer detached, then quit this process.
 
     The installer runs in /VERYSILENT mode: no UI, automatic replace, and the
-    [Run] entry in voicetype.iss launches the new VoiceType.exe afterwards.
+    [Run] entry in blitztext.iss launches the new Blitztext.exe afterwards.
     """
     DETACHED = 0x00000008
     NEW_GROUP = 0x00000200

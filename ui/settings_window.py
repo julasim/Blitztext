@@ -236,7 +236,7 @@ def _section_label(text: str) -> QLabel:
 
 
 class SettingsWindow(QWidget):
-    """Settings window for VoiceType."""
+    """Settings window for Blitztext."""
 
     settings_saved = pyqtSignal(dict)
 
@@ -249,7 +249,7 @@ class SettingsWindow(QWidget):
         }
         # Track dirty edits of the currently shown key
         self._key_edits: dict[str, str] = {}
-        self.setWindowTitle("VoiceType – Einstellungen")
+        self.setWindowTitle("Blitztext – Einstellungen")
         self.setFixedWidth(460)
         self.setWindowFlags(Qt.WindowType.WindowCloseButtonHint | Qt.WindowType.WindowTitleHint)
         self.setStyleSheet(
@@ -276,7 +276,7 @@ class SettingsWindow(QWidget):
         layout.setContentsMargins(32, 28, 32, 24)
 
         # Title
-        title = QLabel("VoiceType")
+        title = QLabel("Blitztext")
         f = QFont("Segoe UI", 16, QFont.Weight.DemiBold)
         f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, -0.3)
         title.setFont(f)

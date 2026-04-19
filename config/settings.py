@@ -7,7 +7,7 @@ from .defaults import DEFAULTS
 
 def _config_dir() -> str:
     appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
-    path = os.path.join(appdata, "VoiceType")
+    path = os.path.join(appdata, "Blitztext")
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -51,7 +51,7 @@ def _keyring_name(provider: str) -> str:
 def get_provider_key(provider: str) -> str:
     """Retrieve an API key for a given LLM provider from the Windows Credential Manager."""
     try:
-        return keyring.get_password("VoiceType", _keyring_name(provider)) or ""
+        return keyring.get_password("Blitztext", _keyring_name(provider)) or ""
     except Exception:
         return ""
 
@@ -59,13 +59,13 @@ def get_provider_key(provider: str) -> str:
 def set_provider_key(provider: str, api_key: str) -> None:
     """Store an API key for a given LLM provider in the Windows Credential Manager."""
     try:
-        keyring.set_password("VoiceType", _keyring_name(provider), api_key)
+        keyring.set_password("Blitztext", _keyring_name(provider), api_key)
     except Exception:
         pass
 
 
 def set_autostart(enabled: bool) -> None:
-    """Register or remove a Windows auto-start entry for VoiceType.
+    """Register or remove a Windows auto-start entry for Blitztext.
 
     Only effective when running as a packaged executable (PyInstaller build).
     Running via ``python main.py`` is a no-op to avoid registering the Python
@@ -84,11 +84,11 @@ def set_autostart(enabled: bool) -> None:
             winreg.KEY_SET_VALUE,
         )
         if enabled:
-            # sys.executable points at the installed VoiceType.exe when frozen
-            winreg.SetValueEx(key, "VoiceType", 0, winreg.REG_SZ, f'"{sys.executable}"')
+            # sys.executable points at the installed Blitztext.exe when frozen
+            winreg.SetValueEx(key, "Blitztext", 0, winreg.REG_SZ, f'"{sys.executable}"')
         else:
             try:
-                winreg.DeleteValue(key, "VoiceType")
+                winreg.DeleteValue(key, "Blitztext")
             except FileNotFoundError:
                 pass
         winreg.CloseKey(key)
