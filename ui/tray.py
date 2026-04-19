@@ -1,6 +1,8 @@
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
-from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush
+from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QGuiApplication
 from PyQt6.QtCore import pyqtSignal, QObject, QRectF, QRect, Qt
+
+from core.log import log
 
 
 class TraySignals(QObject):
@@ -11,13 +13,61 @@ class TraySignals(QObject):
     open_home = pyqtSignal(QRect)
 
 
-class SystemTray:
-    """Minimal line-art microphone icon. State indicated by line weight and subtle fill."""
+# ---------------------------------------------------------------------------
+# Taskbar-theme detection
+# ---------------------------------------------------------------------------
 
-    # Monochrome greys — single accent for recording
-    C_IDLE = QColor(110, 110, 110)
-    C_ACTIVE = QColor(10, 10, 10)
-    C_RECORDING = QColor(10, 10, 10)  # solid black when recording
+def _taskbar_is_dark() -> bool:
+    """Return True if the Windows taskbar uses the dark theme.
+
+    Preferred source: the ``SystemUsesLightTheme`` registry value, which is
+    the one Windows itself consults for the taskbar (``AppsUseLightTheme``
+    controls app windows and can differ). We fall back to Qt's color-scheme
+    hint, and finally default to dark (Windows 11's out-of-box setting).
+    """
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        )
+        try:
+            value, _ = winreg.QueryValueEx(key, "SystemUsesLightTheme")
+            return value == 0
+        finally:
+            winreg.CloseKey(key)
+    except Exception:
+        pass
+    try:
+        scheme = QGuiApplication.styleHints().colorScheme()
+        return scheme == Qt.ColorScheme.Dark
+    except Exception:
+        return True
+
+
+class SystemTray:
+    """Minimal line-art microphone icon. State indicated by line weight and subtle fill.
+
+    Colours adapt to the Windows taskbar theme (light or dark) so the icon
+    never disappears into the taskbar. The icon is redrawn automatically when
+    the user toggles system theme at runtime.
+    """
+
+    # --- Palette per theme ---------------------------------------------------
+    # The palette is picked at icon-draw time based on _taskbar_is_dark().
+    # Values tuned for good contrast without looking harsh on either taskbar.
+    _PALETTE = {
+        "dark": {       # dark taskbar → light-ish icon
+            "idle":       QColor(220, 220, 220),
+            "active":     QColor(255, 255, 255),
+            "recording":  QColor(255, 255, 255),
+        },
+        "light": {      # light taskbar → dark icon
+            "idle":       QColor(90, 90, 90),
+            "active":     QColor(10, 10, 10),
+            "recording":  QColor(10, 10, 10),
+        },
+    }
 
     def __init__(self, app: QApplication):
         self.signals = TraySignals()
@@ -30,6 +80,12 @@ class SystemTray:
         # Route every icon activation: left-click → home popup, right-click
         # keeps falling through to the built-in QMenu context-menu behaviour.
         self._tray.activated.connect(self._on_activated)
+        # Live-update the icon if the user toggles Windows theme (light ↔ dark)
+        # while the app is running.
+        try:
+            QGuiApplication.styleHints().colorSchemeChanged.connect(self._on_theme_changed)
+        except Exception as e:
+            log(f"colorSchemeChanged connect failed: {type(e).__name__}: {e}")
         self._tray.show()
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
@@ -41,26 +97,33 @@ class SystemTray:
         ):
             self.signals.open_home.emit(self._tray.geometry())
 
+    def _on_theme_changed(self, *_args) -> None:
+        """Windows theme toggled — repaint the current-state icon."""
+        log(f"taskbar theme changed (dark={_taskbar_is_dark()}); redrawing tray icon")
+        self._set_icon(self._state)
+
     def _create_mic_icon(self, state: str) -> QIcon:
         size = 64
         pixmap = QPixmap(size, size)
         pixmap.fill(QColor(0, 0, 0, 0))
 
+        palette = self._PALETTE["dark" if _taskbar_is_dark() else "light"]
+
         p = QPainter(pixmap)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         if state == "recording":
-            stroke_color = self.C_RECORDING
-            fill_color = self.C_RECORDING
+            stroke_color = palette["recording"]
+            fill_color = palette["recording"]
             stroke_w = 4.0
         elif state == "processing":
-            stroke_color = self.C_ACTIVE
+            stroke_color = palette["active"]
             fill_color = None
             stroke_w = 4.0
         else:
-            stroke_color = self.C_IDLE
+            stroke_color = palette["idle"]
             fill_color = None
-            stroke_w = 3.2
+            stroke_w = 3.4  # slightly beefier outline so it reads at 16 px
 
         cx = size / 2
 
