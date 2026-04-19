@@ -40,14 +40,22 @@ class RecordingOverlay(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Attributes must be set BEFORE window flags on some Qt/Windows combos,
+        # otherwise WA_TranslucentBackground silently falls back to opaque
+        # (visible as a white/grey rectangle behind the pill on a light
+        # desktop, or black on dark desktop).
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAutoFillBackground(False)
+        self.setStyleSheet("background: transparent;")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
             | Qt.WindowType.WindowTransparentForInput
+            | Qt.WindowType.NoDropShadowWindowHint   # no native chrome — we paint our own shadow
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
 
         self._start_time = 0.0

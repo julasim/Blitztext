@@ -236,14 +236,20 @@ class HomeWindow(QWidget):
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
         self._config = dict(config)
+        # Set attributes BEFORE window flags — on some Qt/Windows combos the
+        # order matters and setting WA_TranslucentBackground afterwards silently
+        # falls back to opaque (visible as a white/grey rectangle around the
+        # card on a light desktop, or black on dark).
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+        self.setStyleSheet("HomeWindow { background: transparent; }")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
             | Qt.WindowType.NoDropShadowWindowHint  # we draw our own
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
 
         self._build_ui()
