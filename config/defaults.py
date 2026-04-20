@@ -65,3 +65,48 @@ WHISPER_MODELS = [
     ("medium",           "Ausgewogen (1,5 GB)"),
     ("large-v3-turbo",   "Höchste Qualität (1,6 GB)"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# TTS providers
+# ---------------------------------------------------------------------------
+
+TTS_PROVIDER_LABELS = {
+    "sapi":  "Windows (SAPI)",
+    "piper": "Piper (neuronal, offline)",
+}
+
+
+# Piper voices live on HuggingFace under rhasspy/piper-voices. Each voice
+# is a ``.onnx`` model + ``.onnx.json`` config; we download both on first
+# use to %APPDATA%\Blitztext\voices\. The URLs below link directly to the
+# raw files so we don't need the HF API.
+_PIPER_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE"
+
+PIPER_VOICES = {
+    "de_DE-thorsten-medium": {
+        "label":     "Thorsten (männlich, empfohlen)",
+        "size_mb":   63,
+        "onnx_url":  f"{_PIPER_BASE}/thorsten/medium/de_DE-thorsten-medium.onnx",
+        "json_url":  f"{_PIPER_BASE}/thorsten/medium/de_DE-thorsten-medium.onnx.json",
+    },
+    "de_DE-kerstin-low": {
+        "label":     "Kerstin (weiblich, schnell)",
+        "size_mb":   30,
+        "onnx_url":  f"{_PIPER_BASE}/kerstin/low/de_DE-kerstin-low.onnx",
+        "json_url":  f"{_PIPER_BASE}/kerstin/low/de_DE-kerstin-low.onnx.json",
+    },
+    "de_DE-eva_k-x_low": {
+        "label":     "Eva K. (weiblich, sehr klein)",
+        "size_mb":   15,
+        "onnx_url":  f"{_PIPER_BASE}/eva_k/x_low/de_DE-eva_k-x_low.onnx",
+        "json_url":  f"{_PIPER_BASE}/eva_k/x_low/de_DE-eva_k-x_low.onnx.json",
+    },
+}
+
+# Sensible defaults per provider so the settings UI can auto-pick when the
+# user switches provider for the first time.
+TTS_DEFAULT_VOICE = {
+    "sapi":  "",                          # empty → SAPI's first voice matching the UI language
+    "piper": "de_DE-thorsten-medium",
+}

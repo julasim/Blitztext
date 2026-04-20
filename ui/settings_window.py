@@ -12,6 +12,8 @@ from config.defaults import (
     WHISPER_MODELS,
     DEFAULT_PROMPT_MODE2,
     DEFAULT_PROMPT_MODE3,
+    TTS_PROVIDER_LABELS,
+    TTS_DEFAULT_VOICE,
 )
 from config import settings as settings_mod
 
@@ -387,29 +389,29 @@ class SettingsWindow(QWidget):
         # --- TTS (Vorlesen) ---
         layout.addWidget(_section_label("VORLESEN"))
 
-        # Voice dropdown — populated from the SAPI provider on the main thread.
-        # Lazy import so settings.py stays independent of core.tts if someone
-        # ever opens settings without the TTS dependency installed.
-        from core.tts import list_voices
-        voices = list_voices(self._config.get("tts_provider", "sapi"))
+        # Provider dropdown. The voice dropdown repopulates when the user
+        # switches between SAPI (Windows-built-in) and Piper (neural, offline).
+        self._tts_provider_combo = QComboBox()
+        self._tts_provider_combo.setFixedWidth(240)
+        self._tts_provider_order = ["sapi", "piper"]
+        for p in self._tts_provider_order:
+            self._tts_provider_combo.addItem(TTS_PROVIDER_LABELS[p], userData=p)
+        current_tts_provider = self._config.get("tts_provider", "sapi")
+        if current_tts_provider in self._tts_provider_order:
+            self._tts_provider_combo.setCurrentIndex(
+                self._tts_provider_order.index(current_tts_provider)
+            )
+        self._tts_provider_combo.currentIndexChanged.connect(self._on_tts_provider_changed)
+        layout.addLayout(self._field_row("Anbieter", self._tts_provider_combo))
+        layout.addWidget(_hairline())
 
+        # Voice dropdown (repopulated on provider change).
         self._tts_voice_combo = QComboBox()
         self._tts_voice_combo.setFixedWidth(240)
-        self._tts_voice_combo.addItem("System-Standard", userData="")
-        current_voice = self._config.get("tts_voice", "") or ""
-        selected_idx = 0
-        for i, v in enumerate(voices, start=1):
-            label = v["name"]
-            if v.get("language"):
-                label = f"{v['name']}  ·  {v['language']}"
-            self._tts_voice_combo.addItem(label, userData=v["id"])
-            if v["id"] == current_voice:
-                selected_idx = i
-        self._tts_voice_combo.setCurrentIndex(selected_idx)
         layout.addLayout(self._field_row("Stimme", self._tts_voice_combo))
         layout.addWidget(_hairline())
 
-        # Speed offset — show as a friendly labelled dropdown (−10..+10 maps to ~±80 wpm).
+        # Speed offset — friendly labelled dropdown.
         self._tts_rate_combo = QComboBox()
         self._tts_rate_combo.setFixedWidth(240)
         _RATE_CHOICES = [
@@ -427,6 +429,9 @@ class SettingsWindow(QWidget):
                 selected_idx = i
         self._tts_rate_combo.setCurrentIndex(selected_idx)
         layout.addLayout(self._field_row("Tempo", self._tts_rate_combo))
+
+        # Initialise the voice dropdown with whichever provider is currently selected.
+        self._on_tts_provider_changed()
 
         # --- ALLGEMEIN ---
         layout.addWidget(_section_label("ALLGEMEIN"))
@@ -607,6 +612,62 @@ class SettingsWindow(QWidget):
         self._api_key_input.setText(shown_key)
         self._api_key_input.blockSignals(False)
 
+    def _current_tts_provider(self) -> str:
+        return self._tts_provider_combo.currentData() or "sapi"
+
+    def _on_tts_provider_changed(self, *_args) -> None:
+        """Rebuild the voice dropdown for the currently selected TTS provider.
+
+        Piper voices show an "(wird beim Speichern geladen)" hint on entries
+        that haven't been downloaded yet — the actual download is triggered
+        from _save() so the user only pays that cost when they commit.
+        """
+        from core.tts import list_voices
+
+        provider = self._current_tts_provider()
+        voices = list_voices(provider)
+        # Which voice is currently saved? Remember the full dict so we can
+        # preserve the user's choice across provider switches where possible.
+        saved_voice = self._config.get("tts_voice", "") or ""
+
+        self._tts_voice_combo.blockSignals(True)
+        self._tts_voice_combo.clear()
+
+        if provider == "sapi":
+            # SAPI ships with a "System-Standard" meta-entry (empty id →
+            # the engine picks the first voice matching the UI language).
+            self._tts_voice_combo.addItem("System-Standard", userData="")
+            selected_idx = 0
+            for i, v in enumerate(voices, start=1):
+                label = v["name"]
+                if v.get("language"):
+                    label = f"{v['name']}  ·  {v['language']}"
+                self._tts_voice_combo.addItem(label, userData=v["id"])
+                if v["id"] == saved_voice:
+                    selected_idx = i
+            self._tts_voice_combo.setCurrentIndex(selected_idx)
+        else:  # piper
+            # Piper voices always come from our catalogue. Mark uncached
+            # voices so the user knows a download will happen on save.
+            selected_idx = 0
+            default_id = TTS_DEFAULT_VOICE.get("piper", "")
+            for i, v in enumerate(voices):
+                label = v["name"]
+                if v.get("size_mb"):
+                    label = f"{label}  ·  {v['size_mb']} MB"
+                if not v.get("installed", False):
+                    label = f"{label}  (lädt beim Speichern)"
+                self._tts_voice_combo.addItem(label, userData=v["id"])
+                if v["id"] == saved_voice:
+                    selected_idx = i
+                elif v["id"] == default_id and saved_voice not in {v["id"] for v in voices}:
+                    # Saved voice is not a Piper voice → fall back to default
+                    selected_idx = i
+            if voices:
+                self._tts_voice_combo.setCurrentIndex(selected_idx)
+
+        self._tts_voice_combo.blockSignals(False)
+
     def closeEvent(self, event) -> None:
         for badge in (self._badge1, self._badge2, self._badge3, self._badge4):
             try:
@@ -647,6 +708,8 @@ class SettingsWindow(QWidget):
         prompt3 = self._prompt3_edit.toPlainText().strip() or DEFAULT_PROMPT_MODE3
 
         lang_map = {"Deutsch": "de", "Englisch": "en", "Automatisch": "auto"}
+        tts_provider = self._current_tts_provider()
+        tts_voice = self._tts_voice_combo.currentData() or ""
         result = {
             "hotkey_mode1": self._badge1.hotkey,
             "hotkey_mode2": self._badge2.hotkey,
@@ -660,7 +723,8 @@ class SettingsWindow(QWidget):
             "provider_keys": dict(self._key_edits),
             "llm_prompt_mode2": prompt2,
             "llm_prompt_mode3": prompt3,
-            "tts_voice": self._tts_voice_combo.currentData() or "",
+            "tts_provider": tts_provider,
+            "tts_voice": tts_voice,
             "tts_rate": self._tts_rate_combo.currentData() or 0,
         }
         self.settings_saved.emit(result)

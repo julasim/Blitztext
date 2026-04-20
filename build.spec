@@ -3,11 +3,17 @@
 # Produces:    dist/Blitztext/Blitztext.exe  (+ supporting files)
 # Then wrap:   iscc installer/blitztext.iss
 
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 # faster_whisper ships asset files (e.g. silero_vad_v6.onnx) that must travel
 # with the bundle; PyInstaller doesn't detect them automatically.
 _fw_data = collect_data_files("faster_whisper")
+
+# piper-tts bundles espeak-ng-data (phoneme tables per language) and a few
+# runtime assets. Without these the Piper TTS voice fails to initialise on
+# the user's installed .exe even though it works in dev.
+_piper_data = collect_data_files("piper")
+_onnx_data = collect_data_files("onnxruntime")
 
 a = Analysis(
     ['main.py'],
@@ -15,7 +21,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('ui/assets', 'ui/assets'),
-    ] + _fw_data,
+    ] + _fw_data + _piper_data + _onnx_data,
     hiddenimports=[
         'faster_whisper',
         'sounddevice',
@@ -26,9 +32,8 @@ a = Analysis(
         'keyring.backends.Windows',
         'numpy',
         'httpx',
-        # TTS: pyttsx3 lazy-loads its Windows SAPI driver via importlib,
-        # so PyInstaller can't auto-discover these. Without them the
-        # installed .exe crashes the first time the user hits Strg+Alt+4.
+        # SAPI TTS: pyttsx3 lazy-loads its Windows driver via importlib,
+        # so PyInstaller can't auto-discover these.
         'pyttsx3',
         'pyttsx3.drivers',
         'pyttsx3.drivers.sapi5',
@@ -36,7 +41,11 @@ a = Analysis(
         'pythoncom',
         'win32com',
         'win32com.client',
-    ],
+        # Piper neural TTS + onnxruntime. collect_submodules pulls every
+        # piper.* / onnxruntime.* submodule the lazy loader might reach for.
+        'piper',
+        'onnxruntime',
+    ] + collect_submodules("piper") + collect_submodules("onnxruntime"),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

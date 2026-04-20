@@ -35,6 +35,7 @@ from core.hotkey import HotkeyListener
 from core.llm import process_text
 from core.tts import make_provider as make_tts_provider
 from core.clipboard import get_selected_or_clipboard_text
+from core.voice_download import download_voice, is_voice_installed
 from core.updater import check_for_update, CURRENT_VERSION
 from core.update_installer import download_installer, launch_installer_and_quit
 from ui.tray import SystemTray
@@ -533,6 +534,10 @@ class BlitztextApp:
         self._register_hotkeys()
         # Push new hotkey labels into the home window
         self._home_window.set_config(self._cfg)
+        # If the user picked a Piper voice that isn't cached yet, download it
+        # now so the next Strg+Alt+4 press finds it ready. Runs on a worker
+        # thread with a download dialog so the UI stays responsive.
+        self._ensure_piper_voice_available()
         # Rebuild the TTS provider with the new voice / rate / language so
         # the next Strg+Alt+4 press uses the updated settings immediately.
         self._tts = make_tts_provider(
@@ -547,6 +552,61 @@ class BlitztextApp:
         if new_model and new_model != old_model:
             self._transcriber.set_model(new_model)
             self._load_model_async()
+
+    def _ensure_piper_voice_available(self) -> None:
+        """If the current TTS config points at a Piper voice that's not yet
+        downloaded, fetch it on a worker thread with a progress dialog.
+
+        No-op for SAPI or for already-cached Piper voices. Errors don't fail
+        loud: the TTS provider factory will transparently fall back to SAPI
+        until the user retries the download.
+        """
+        if self._cfg.get("tts_provider", "sapi") != "piper":
+            return
+        voice_id = self._cfg.get("tts_voice", "")
+        if not voice_id or is_voice_installed(voice_id):
+            return
+
+        log(f"piper voice {voice_id!r} missing — starting download")
+        dialog = DownloadDialog(voice_id)
+        self._download_dialog = dialog
+
+        def worker():
+            try:
+                def progress(done: int, total: int, label: str):
+                    dialog.report(done, total, label)
+                download_voice(voice_id, on_progress=progress)
+                self._invoke_main(self._on_voice_downloaded)
+            except Exception as e:
+                log_exc("piper voice download failed")
+                err = str(e)
+                self._invoke_main(
+                    lambda: self._on_voice_download_error(err)
+                )
+
+        dialog.show()
+        dialog.raise_()
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_voice_downloaded(self) -> None:
+        self._close_download_dialog()
+        self._tray.show_message(
+            "Blitztext", "Piper-Stimme geladen. Vorlesen bereit."
+        )
+        # Rebuild the TTS provider now that the voice files are on disk.
+        self._tts = make_tts_provider(
+            provider=self._cfg.get("tts_provider", "sapi"),
+            voice_id=self._cfg.get("tts_voice", ""),
+            rate_offset=int(self._cfg.get("tts_rate", 0) or 0),
+            language=self._cfg.get("language", "de"),
+        )
+
+    def _on_voice_download_error(self, error: str) -> None:
+        self._close_download_dialog()
+        self._tray.show_message(
+            "Blitztext – Fehler",
+            f"Piper-Stimme konnte nicht geladen werden:\n{error}",
+        )
 
     def _on_settings_closed(self) -> None:
         self._settings_window = None
