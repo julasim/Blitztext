@@ -7,6 +7,17 @@ to the clipboard's current content if no selection is captured within
 a short window — that way a plain "copy, press hotkey, listen" flow
 also works.
 
+Critical on German Windows: when the user holds Ctrl+Alt+<digit> (the
+TTS hotkey), the Alt key is still physically pressed when this function
+runs. Sending a synthetic Ctrl+C on top of a held Alt is interpreted by
+Windows as Ctrl+AltGr+C, which is NOT a copy command — the clipboard
+stays empty, and we incorrectly fall back to the pre-existing clipboard
+content. The user then hears the same stale text read aloud every time.
+To avoid that, we release every non-Ctrl modifier the OS thinks is
+currently held before synthesising the Ctrl+C. The user's physical
+keys can stay held; Windows will resync modifier state when they
+actually release them.
+
 The original clipboard text is always restored in a ``finally`` block,
 even if any intermediate step raises. Images, files, and other non-text
 clipboard payloads are not preserved by this implementation (pyperclip
@@ -23,6 +34,18 @@ from core.log import log
 
 
 _SENTINEL = "\x00\x00\x00blitztext-probe\x00\x00\x00"
+
+# Non-Ctrl modifiers that must NOT be held when we send our Ctrl+C.
+# Ctrl stays (we need it for Copy); if the user has Ctrl held as part
+# of their TTS hotkey, a synthetic Ctrl press layered on top is fine.
+# All common variants listed so the German-layout AltGr (right alt) is
+# definitely covered regardless of which name the keyboard library
+# recognises on the running system.
+_INTERFERING_MODIFIERS = (
+    "alt", "left alt", "right alt", "alt gr",
+    "shift", "left shift", "right shift",
+    "left windows", "right windows",
+)
 
 
 def _safe_paste() -> str:
@@ -42,7 +65,26 @@ def _safe_copy(text: str) -> bool:
         return False
 
 
-def get_selected_or_clipboard_text(timeout_ms: int = 180) -> str:
+def _release_interfering_modifiers() -> list[str]:
+    """Release any Alt/Shift/Win keys currently held in the OS state.
+
+    Returns the list of modifier names that were actually released so
+    the caller can (optionally) log them. We don't re-press afterwards:
+    the user's physical keys stay held, and Windows re-syncs modifier
+    state the next time the user actually moves/releases them.
+    """
+    released = []
+    for mod in _INTERFERING_MODIFIERS:
+        try:
+            if keyboard.is_pressed(mod):
+                keyboard.release(mod)
+                released.append(mod)
+        except Exception as e:
+            log(f"release({mod}) failed: {type(e).__name__}: {e}")
+    return released
+
+
+def get_selected_or_clipboard_text(timeout_ms: int = 250) -> str:
     """Return the text the user most likely wants read aloud.
 
     Strategy:
@@ -50,9 +92,12 @@ def get_selected_or_clipboard_text(timeout_ms: int = 180) -> str:
       2. If possible, write a unique sentinel so we can detect whether
          the Ctrl+C actually put something new there. If setting the
          sentinel fails, fall back to comparing against ``original``.
-      3. Simulate Ctrl+C.
-      4. Poll briefly for the clipboard to change.
-      5. Restore ``original`` in a ``finally`` block — this runs even
+      3. Release any held non-Ctrl modifiers so a clean Ctrl+C reaches
+         the focused window (critical — otherwise Ctrl+Alt+C fires on
+         German layouts and Copy doesn't happen).
+      4. Simulate Ctrl+C.
+      5. Poll briefly for the clipboard to change.
+      6. Restore ``original`` in a ``finally`` block — this runs even
          if anything above raises, so the sentinel can never leak out
          to the user's real clipboard.
 
@@ -63,6 +108,12 @@ def get_selected_or_clipboard_text(timeout_ms: int = 180) -> str:
     sentinel_set = _safe_copy(_SENTINEL)
 
     try:
+        released = _release_interfering_modifiers()
+        if released:
+            log(f"clipboard: released held modifiers before Ctrl+C: {released}")
+            # Tiny settle so the release events are processed before our Ctrl+C.
+            time.sleep(0.03)
+
         try:
             keyboard.send("ctrl+c")
         except Exception as e:
@@ -85,7 +136,12 @@ def get_selected_or_clipboard_text(timeout_ms: int = 180) -> str:
                     break
             time.sleep(0.015)
 
-        return selected or original
+        result = selected or original
+        log(
+            f"clipboard capture: sentinel_set={sentinel_set} "
+            f"selected_changed={bool(selected)} result_len={len(result)}"
+        )
+        return result
     finally:
         # Always restore whatever the user had in the clipboard before we
         # poked it. Run under a nested try so a failing restore can't mask
