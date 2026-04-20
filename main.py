@@ -33,6 +33,8 @@ from core.transcription import Transcriber
 from core.injector import inject_text
 from core.hotkey import HotkeyListener
 from core.llm import process_text
+from core.tts import make_provider as make_tts_provider
+from core.clipboard import get_selected_or_clipboard_text
 from core.updater import check_for_update, CURRENT_VERSION
 from core.update_installer import download_installer, launch_installer_and_quit
 from ui.tray import SystemTray
@@ -109,10 +111,19 @@ class BlitztextApp:
 
         self._processing = False
         self._processing_lock = threading.Lock()
+        # TTS playback is mutually exclusive with dictation — tracked via
+        # self._speaking + the hotkey listener's single active mode.
+        self._speaking = False
+        self._tts = make_tts_provider(
+            provider=self._cfg.get("tts_provider", "sapi"),
+            voice_id=self._cfg.get("tts_voice", ""),
+            rate_offset=int(self._cfg.get("tts_rate", 0) or 0),
+            language=self._cfg.get("language", "de"),
+        )
 
         self._hotkey_listener = HotkeyListener(
-            on_start=self._on_recording_start,
-            on_stop=self._on_recording_stop,
+            on_start=self._on_hotkey_start,
+            on_stop=self._on_hotkey_stop,
         )
         self._register_hotkeys()
 
@@ -185,13 +196,38 @@ class BlitztextApp:
         self._tray.show_message("Blitztext – Fehler", f"Whisper-Modell konnte nicht geladen werden:\n{error}")
 
     def _register_hotkeys(self) -> None:
+        self._hotkey_listener.clear()
         h1 = self._cfg.get("hotkey_mode1", "ctrl+alt+1")
         h2 = self._cfg.get("hotkey_mode2", "ctrl+alt+2")
         h3 = self._cfg.get("hotkey_mode3", "ctrl+alt+3")
-        log(f"Register hotkeys: mode1={h1} mode2={h2} mode3={h3}")
+        h4 = self._cfg.get("hotkey_mode4", "ctrl+alt+4")
+        log(f"Register hotkeys: mode1={h1} mode2={h2} mode3={h3} mode4={h4}")
         self._hotkey_listener.register(h1, 1)
         self._hotkey_listener.register(h2, 2)
         self._hotkey_listener.register(h3, 3)
+        self._hotkey_listener.register(h4, 4)
+
+    # ---- Hotkey dispatcher (toggle semantics) -----------------------------
+
+    def _on_hotkey_start(self, mode: int) -> None:
+        """First press of a hotkey — begin the corresponding action.
+
+        Modes 1-3: start audio recording.
+        Mode 4:    snapshot selection and start TTS playback.
+        """
+        if mode == 4:
+            self._start_tts()
+        else:
+            self._on_recording_start(mode)
+
+    def _on_hotkey_stop(self, mode: int) -> None:
+        """Second press of the same hotkey (or Esc) — end the current action."""
+        if mode == 4:
+            self._stop_tts()
+        else:
+            self._on_recording_stop(mode)
+
+    # ---- Dictation (modes 1-3) --------------------------------------------
 
     def _on_recording_start(self, mode: int) -> None:
         log(f"Hotkey pressed — mode={mode} model_loaded={self._transcriber.is_loaded} processing={self._processing}")
@@ -212,19 +248,24 @@ class BlitztextApp:
             return
         with self._processing_lock:
             if self._processing:
+                self._hotkey_listener._reset_active_mode()
                 return
+        # Never start recording while TTS is speaking — stop TTS first.
+        if self._speaking:
+            self._stop_tts()
         try:
             self._recorder.start()
         except Exception as e:
             self._invoke_main(lambda: self._tray.show_message(
                 "Blitztext – Fehler", str(e),
             ))
+            self._hotkey_listener._reset_active_mode()
             return
         self._invoke_main(lambda: self._set_state("recording"))
         self._invoke_main(self._recording_overlay.show_overlay)
 
     def _on_recording_stop(self, mode: int) -> None:
-        log(f"Hotkey released — mode={mode}")
+        log(f"Hotkey stop — mode={mode}")
         self._invoke_main(self._recording_overlay.hide_overlay)
         audio = self._recorder.stop()
         import numpy as _np
@@ -272,6 +313,16 @@ class BlitztextApp:
                 )
                 log(f"LLM returned: {text[:80]!r}")
 
+            # Also copy into the clipboard so the user has a safety net: if
+            # focus changed during transcription and the injection lands in
+            # the wrong window, they can still Ctrl+V into the intended one.
+            try:
+                import pyperclip
+                pyperclip.copy(text)
+                log("Text copied to clipboard (memory fallback)")
+            except Exception as e:
+                log(f"clipboard copy failed: {type(e).__name__}: {e}")
+
             log("Injecting text …")
             inject_text(text)
             log("Injection done")
@@ -284,6 +335,74 @@ class BlitztextApp:
                 self._processing = False
             self._invoke_main(lambda: self._set_state("idle"))
 
+    # ---- TTS (mode 4) -----------------------------------------------------
+
+    def _start_tts(self) -> None:
+        """Snapshot the currently-selected text (or clipboard) and read it aloud.
+
+        The text is captured exactly once, at hotkey-press time, so the user
+        can switch windows, scroll, or click around during playback without
+        interrupting what's being spoken.
+        """
+        log("TTS start")
+        if self._speaking:
+            # Shouldn't happen with toggle semantics, but guard anyway.
+            self._stop_tts()
+            return
+
+        try:
+            text = get_selected_or_clipboard_text()
+        except Exception as e:
+            log(f"TTS selection capture failed: {type(e).__name__}: {e}")
+            text = ""
+        text = (text or "").strip()
+        if not text:
+            log("  → no text to speak")
+            self._hotkey_listener._reset_active_mode()
+            self._invoke_main(lambda: self._tray.show_message(
+                "Blitztext", "Nichts zum Vorlesen — markiere Text oder kopiere ihn in die Zwischenablage."
+            ))
+            return
+
+        # Rebuild the TTS provider each time so voice/rate edits in settings
+        # take effect immediately. Cheap on SAPI.
+        self._tts = make_tts_provider(
+            provider=self._cfg.get("tts_provider", "sapi"),
+            voice_id=self._cfg.get("tts_voice", ""),
+            rate_offset=int(self._cfg.get("tts_rate", 0) or 0),
+            language=self._cfg.get("language", "de"),
+        )
+
+        self._speaking = True
+        self._invoke_main(lambda: self._set_state("speaking"))
+        log(f"  → speaking {len(text)} chars")
+
+        def on_done():
+            self._speaking = False
+            # Clear the listener's active-mode flag so the next press starts fresh
+            # (normally the stop-toggle does this, but natural end-of-speech doesn't
+            # go through the hotkey path).
+            try:
+                self._hotkey_listener._reset_active_mode()
+            except Exception:
+                pass
+            self._invoke_main(lambda: self._set_state("idle"))
+            log("TTS finished")
+
+        self._tts.speak(text, on_finished=on_done)
+
+    def _stop_tts(self) -> None:
+        log("TTS stop")
+        try:
+            self._tts.stop()
+        except Exception as e:
+            log(f"tts.stop failed: {type(e).__name__}: {e}")
+        # The provider's on_finished callback will flip _speaking back to False
+        # and set idle state. As a belt-and-suspenders we also do it here in case
+        # stop() interrupts before the worker thread runs its finally clause.
+        self._speaking = False
+        self._invoke_main(lambda: self._set_state("idle"))
+
     def _open_home(self, anchor) -> None:
         """Tray left-click → position & show the home popup near the tray icon."""
         try:
@@ -294,6 +413,8 @@ class BlitztextApp:
 
     def _home_status(self) -> str:
         """Map internal state to the status shown in the home window."""
+        if self._speaking:
+            return "speaking"
         if self._processing:
             return "processing"
         if not self._transcriber.is_loaded:
@@ -341,6 +462,14 @@ class BlitztextApp:
         self._register_hotkeys()
         # Push new hotkey labels into the home window
         self._home_window.set_config(self._cfg)
+        # Rebuild the TTS provider with the new voice / rate / language so
+        # the next Strg+Alt+4 press uses the updated settings immediately.
+        self._tts = make_tts_provider(
+            provider=self._cfg.get("tts_provider", "sapi"),
+            voice_id=self._cfg.get("tts_voice", ""),
+            rate_offset=int(self._cfg.get("tts_rate", 0) or 0),
+            language=self._cfg.get("language", "de"),
+        )
 
         # If the Whisper model changed, reload it (shows download dialog if needed)
         new_model = self._cfg.get("whisper_model")
@@ -396,6 +525,10 @@ class BlitztextApp:
     def _cleanup(self) -> None:
         try:
             self._hotkey_listener.stop()
+        except Exception:
+            pass
+        try:
+            self._tts.stop()
         except Exception:
             pass
 

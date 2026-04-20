@@ -59,6 +59,7 @@ MODES = [
     {"id": 1, "title": "Blitztext",     "subtitle": "Sprache rein. Text raus.",      "icon": "mic"},
     {"id": 2, "title": "Blitztext+",    "subtitle": "Geschrieben sprechen.",         "icon": "mic_plus"},
     {"id": 3, "title": "Blitztext $%&!", "subtitle": "Frust rein. Entspannt raus.",   "icon": "mic_filter"},
+    {"id": 4, "title": "Vorlesen",      "subtitle": "Text markieren, Blitztext liest.", "icon": "speaker"},
 ]
 
 
@@ -130,6 +131,13 @@ class ModeIcon(QLabel):
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
 
+        if self._kind == "speaker":
+            self._draw_speaker(p)
+        else:
+            self._draw_mic(p)
+        p.end()
+
+    def _draw_mic(self, p: QPainter) -> None:
         cx = self.SIZE / 2
         # Microphone capsule
         cap_rect = QRectF(cx - 4.0, 3.0, 8.0, 11.0)
@@ -142,15 +150,33 @@ class ModeIcon(QLabel):
 
         # Decorator per kind
         if self._kind == "mic_plus":
-            # small "+" top-right
             p.drawLine(17, 4, 17, 10)
             p.drawLine(14, 7, 20, 7)
         elif self._kind == "mic_filter":
-            # three small horizontal lines (filter/EQ glyph) top-right
             p.drawLine(16, 4, 21, 4)
             p.drawLine(15, 7, 21, 7)
             p.drawLine(17, 10, 21, 10)
-        p.end()
+
+    def _draw_speaker(self, p: QPainter) -> None:
+        # Speaker cone on the left (small square + triangular horn), three
+        # concentric sound arcs on the right — a classic speaker glyph that
+        # reads clearly at 22×22.
+        # Body (small square)
+        p.drawRect(QRectF(3.5, 9.0, 3.0, 5.0))
+        # Horn (trapezoid via polyline)
+        from PyQt6.QtGui import QPolygonF
+        from PyQt6.QtCore import QPointF
+        horn = QPolygonF([
+            QPointF(6.5, 9.0),
+            QPointF(11.0, 5.0),
+            QPointF(11.0, 18.0),
+            QPointF(6.5, 14.0),
+        ])
+        p.drawPolygon(horn)
+        # Three sound waves
+        for i, r in enumerate((3.5, 6.0, 8.5)):
+            arc = QRectF(11.5 - r + 4.0, 11.5 - r, r * 2, r * 2)
+            p.drawArc(arc, -45 * 16, 90 * 16)
 
 
 class ModeRow(QWidget):
@@ -232,7 +258,7 @@ class HomeWindow(QWidget):
     # window to the rounded-rect shape at OS level — only the card
     # outline reaches the screen regardless of backing-store opacity.
     CARD_W = 340
-    CARD_H = 300
+    CARD_H = 360   # +60 for the new "Vorlesen" row + its divider
     CARD_RADIUS = 14
     WIDTH  = CARD_W
     HEIGHT = CARD_H
@@ -274,9 +300,10 @@ class HomeWindow(QWidget):
         self._row1.set_hotkey(self._config.get("hotkey_mode1", "ctrl+alt+1"))
         self._row2.set_hotkey(self._config.get("hotkey_mode2", "ctrl+alt+2"))
         self._row3.set_hotkey(self._config.get("hotkey_mode3", "ctrl+alt+3"))
+        self._row4.set_hotkey(self._config.get("hotkey_mode4", "ctrl+alt+4"))
 
     def set_state(self, state: str) -> None:
-        """State-driven status pill: idle / loading / recording / processing."""
+        """State-driven status pill: idle / loading / recording / processing / speaking."""
         self._status = state
         if state == "recording":
             self._status_dot.set_color(QColor(ACCENT_REC))
@@ -284,6 +311,9 @@ class HomeWindow(QWidget):
         elif state == "processing":
             self._status_dot.set_color(QColor(ACCENT_BUSY))
             self._status_label.setText("Verarbeitung")
+        elif state == "speaking":
+            self._status_dot.set_color(QColor(ACCENT_REC))
+            self._status_label.setText("Liest vor")
         elif state == "loading":
             self._status_dot.set_color(QColor(ACCENT_BUSY))
             self._status_label.setText("Lädt Modell")
@@ -419,11 +449,14 @@ class HomeWindow(QWidget):
         self._row1 = ModeRow(MODES[0], self._config.get("hotkey_mode1", "ctrl+alt+1"))
         self._row2 = ModeRow(MODES[1], self._config.get("hotkey_mode2", "ctrl+alt+2"))
         self._row3 = ModeRow(MODES[2], self._config.get("hotkey_mode3", "ctrl+alt+3"))
+        self._row4 = ModeRow(MODES[3], self._config.get("hotkey_mode4", "ctrl+alt+4"))
         lay.addWidget(self._row1)
         lay.addWidget(self._hairline())
         lay.addWidget(self._row2)
         lay.addWidget(self._hairline())
         lay.addWidget(self._row3)
+        lay.addWidget(self._hairline())
+        lay.addWidget(self._row4)
 
         lay.addStretch(1)
 

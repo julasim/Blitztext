@@ -22,6 +22,8 @@ DEFAULTS = {
     "hotkey_mode1": "ctrl+alt+1",
     "hotkey_mode2": "ctrl+alt+2",
     "hotkey_mode3": "ctrl+alt+3",
+    # Mode 4 = TTS (read selected / clipboard text aloud)
+    "hotkey_mode4": "ctrl+alt+4",
     "whisper_model": "medium",
     "language": "de",
     "llm_provider": "openrouter",
@@ -30,6 +32,11 @@ DEFAULTS = {
     # User-editable system prompts for the two LLM modes.
     "llm_prompt_mode2": DEFAULT_PROMPT_MODE2,
     "llm_prompt_mode3": DEFAULT_PROMPT_MODE3,
+    # TTS settings — provider pattern mirrors llm_provider so we can add
+    # Edge TTS / OpenAI TTS later without restructuring.
+    "tts_provider": "sapi",        # sapi | (future: edge, openai)
+    "tts_voice": "",               # empty = pick first SAPI voice matching `language`
+    "tts_rate": 0,                 # -10 .. +10, 0 = engine default
 }
 
 

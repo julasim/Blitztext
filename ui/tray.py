@@ -112,7 +112,7 @@ class SystemTray:
         p = QPainter(pixmap)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        if state == "recording":
+        if state in ("recording", "speaking"):
             stroke_color = palette["recording"]
             fill_color = palette["recording"]
             stroke_w = 4.0
@@ -167,6 +167,7 @@ class SystemTray:
             "idle": "Blitztext",
             "recording": "Blitztext – Aufnahme",
             "processing": "Blitztext – Verarbeitung",
+            "speaking": "Blitztext – Liest vor",
         }
         self._tray.setToolTip(labels.get(state, "Blitztext"))
 

@@ -26,6 +26,16 @@ a = Analysis(
         'keyring.backends.Windows',
         'numpy',
         'httpx',
+        # TTS: pyttsx3 lazy-loads its Windows SAPI driver via importlib,
+        # so PyInstaller can't auto-discover these. Without them the
+        # installed .exe crashes the first time the user hits Strg+Alt+4.
+        'pyttsx3',
+        'pyttsx3.drivers',
+        'pyttsx3.drivers.sapi5',
+        'pywintypes',
+        'pythoncom',
+        'win32com',
+        'win32com.client',
     ],
     hookspath=[],
     hooksconfig={},

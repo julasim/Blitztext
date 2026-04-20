@@ -327,6 +327,10 @@ class SettingsWindow(QWidget):
 
         self._badge3 = HotkeyBadge(self._config.get("hotkey_mode3", "ctrl+alt+3"))
         layout.addLayout(self._hotkey_row("Förmlich", "Professionell umformuliert", self._badge3))
+        layout.addWidget(_hairline())
+
+        self._badge4 = HotkeyBadge(self._config.get("hotkey_mode4", "ctrl+alt+4"))
+        layout.addLayout(self._hotkey_row("Vorlesen", "Markierten Text vorlesen lassen", self._badge4))
 
         # --- PROVIDER ---
         layout.addWidget(_section_label("LLM PROVIDER"))
@@ -379,6 +383,50 @@ class SettingsWindow(QWidget):
             default=DEFAULT_PROMPT_MODE3,
             layout=layout,
         )
+
+        # --- TTS (Vorlesen) ---
+        layout.addWidget(_section_label("VORLESEN"))
+
+        # Voice dropdown — populated from the SAPI provider on the main thread.
+        # Lazy import so settings.py stays independent of core.tts if someone
+        # ever opens settings without the TTS dependency installed.
+        from core.tts import list_voices
+        voices = list_voices(self._config.get("tts_provider", "sapi"))
+
+        self._tts_voice_combo = QComboBox()
+        self._tts_voice_combo.setFixedWidth(240)
+        self._tts_voice_combo.addItem("System-Standard", userData="")
+        current_voice = self._config.get("tts_voice", "") or ""
+        selected_idx = 0
+        for i, v in enumerate(voices, start=1):
+            label = v["name"]
+            if v.get("language"):
+                label = f"{v['name']}  ·  {v['language']}"
+            self._tts_voice_combo.addItem(label, userData=v["id"])
+            if v["id"] == current_voice:
+                selected_idx = i
+        self._tts_voice_combo.setCurrentIndex(selected_idx)
+        layout.addLayout(self._field_row("Stimme", self._tts_voice_combo))
+        layout.addWidget(_hairline())
+
+        # Speed offset — show as a friendly labelled dropdown (−10..+10 maps to ~±80 wpm).
+        self._tts_rate_combo = QComboBox()
+        self._tts_rate_combo.setFixedWidth(240)
+        _RATE_CHOICES = [
+            (-6, "Deutlich langsamer"),
+            (-3, "Langsamer"),
+            (0,  "Normal"),
+            (3,  "Schneller"),
+            (6,  "Deutlich schneller"),
+        ]
+        current_rate = int(self._config.get("tts_rate", 0) or 0)
+        selected_idx = 2  # default = "Normal"
+        for i, (val, label) in enumerate(_RATE_CHOICES):
+            self._tts_rate_combo.addItem(label, userData=val)
+            if val == current_rate:
+                selected_idx = i
+        self._tts_rate_combo.setCurrentIndex(selected_idx)
+        layout.addLayout(self._field_row("Tempo", self._tts_rate_combo))
 
         # --- ALLGEMEIN ---
         layout.addWidget(_section_label("ALLGEMEIN"))
@@ -560,7 +608,7 @@ class SettingsWindow(QWidget):
         self._api_key_input.blockSignals(False)
 
     def closeEvent(self, event) -> None:
-        for badge in (self._badge1, self._badge2, self._badge3):
+        for badge in (self._badge1, self._badge2, self._badge3, self._badge4):
             try:
                 badge.stop_listening()
             except Exception:
@@ -570,8 +618,9 @@ class SettingsWindow(QWidget):
     def _save(self) -> None:
         from PyQt6.QtWidgets import QMessageBox
 
-        hotkeys = [self._badge1.hotkey, self._badge2.hotkey, self._badge3.hotkey]
-        if len(set(hotkeys)) < 3:
+        hotkeys = [self._badge1.hotkey, self._badge2.hotkey,
+                   self._badge3.hotkey, self._badge4.hotkey]
+        if len(set(hotkeys)) < 4:
             QMessageBox.warning(self, "Konflikt", "Jeder Modus braucht einen eigenen Hotkey.")
             return
 
@@ -602,6 +651,7 @@ class SettingsWindow(QWidget):
             "hotkey_mode1": self._badge1.hotkey,
             "hotkey_mode2": self._badge2.hotkey,
             "hotkey_mode3": self._badge3.hotkey,
+            "hotkey_mode4": self._badge4.hotkey,
             "llm_provider": current,
             "llm_model": self._llm_model_input.text().strip(),
             "whisper_model": self._whisper_combo.currentData() or "medium",
@@ -610,6 +660,8 @@ class SettingsWindow(QWidget):
             "provider_keys": dict(self._key_edits),
             "llm_prompt_mode2": prompt2,
             "llm_prompt_mode3": prompt3,
+            "tts_voice": self._tts_voice_combo.currentData() or "",
+            "tts_rate": self._tts_rate_combo.currentData() or 0,
         }
         self.settings_saved.emit(result)
         self.close()
