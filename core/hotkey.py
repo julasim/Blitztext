@@ -12,10 +12,20 @@ types a 1 into Word" bug).
 """
 
 import threading
+import time
 from typing import Callable
 import keyboard
 
 from core.log import log
+
+
+# If a "down" event stays marked consumed for longer than this without ever
+# receiving its matching "up", treat it as stale and re-arm. This guards
+# against rare edge cases where the OS/LL-hook stops delivering a release
+# (alt-tab with the key still held, modal-dialog focus theft, etc.) —
+# without this the next real press of the same key would be silently
+# swallowed because the stale flag is still set.
+_STALE_CONSUME_SEC = 3.0
 
 
 _NORMALIZE = {
@@ -68,7 +78,9 @@ class HotkeyListener:
         self._pressed: set[str] = set()
         # Trigger keys we've already acted on this physical keypress — lets us
         # ignore Windows' auto-repeat "down" events and wait for a real release.
-        self._consumed: set[str] = set()
+        # Maps key → timestamp so we can auto-expire entries whose release we
+        # never saw (alt-tab-with-held-key, focus theft, driver glitches, …).
+        self._consumed: dict[str, float] = {}
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
 
@@ -151,7 +163,7 @@ class HotkeyListener:
         # --- KEY UP -------------------------------------------------------
         if etype == "up":
             self._pressed.discard(key)
-            self._consumed.discard(key)
+            self._consumed.pop(key, None)
             return True
 
         # --- KEY DOWN -----------------------------------------------------
@@ -166,8 +178,11 @@ class HotkeyListener:
                     return True
                 mode = self._active_mode
                 self._active_mode = None
-                # Re-arm any trigger we were tracking so the next press starts fresh.
+                # Re-arm any trigger we were tracking AND forget which
+                # modifiers we thought were held — the user may have let go
+                # of them during a long-running action and we never saw it.
                 self._consumed.clear()
+                self._pressed.clear()
             self._dispatch(self._on_stop, mode)
             return True
 
@@ -175,10 +190,17 @@ class HotkeyListener:
 
         # Auto-repeat: we've already acted on this key — keep suppressing
         # it (so the trigger key STILL doesn't leak) but don't re-toggle.
-        if key in self._consumed:
-            if self._is_trigger_key_for_any_registered_hotkey(key):
+        # Entries older than _STALE_CONSUME_SEC are auto-cleared so a
+        # never-released key can't silently block all future presses.
+        stale_at = self._consumed.get(key)
+        if stale_at is not None:
+            if time.time() - stale_at > _STALE_CONSUME_SEC:
+                # Stale — drop it and fall through to normal handling.
+                self._consumed.pop(key, None)
+            elif self._is_trigger_key_for_any_registered_hotkey(key):
                 return False
-            return True
+            else:
+                return True
 
         # Check whether this press completes any registered hotkey.
         with self._lock:
@@ -191,8 +213,10 @@ class HotkeyListener:
             if match_mode is None:
                 return True  # unrelated key, let through
 
-            # Mark consumed so auto-repeats of this physical press are ignored.
-            self._consumed.add(key)
+            # Mark consumed (with timestamp) so auto-repeats of this physical
+            # press are ignored until either the key-up arrives or the entry
+            # goes stale and self-expires.
+            self._consumed[key] = time.time()
 
             if self._active_mode is None:
                 # Toggle ON

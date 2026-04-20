@@ -113,7 +113,12 @@ class BlitztextApp:
         self._processing_lock = threading.Lock()
         # TTS playback is mutually exclusive with dictation — tracked via
         # self._speaking + the hotkey listener's single active mode.
+        # The lock is needed because the TTS worker thread flips _speaking
+        # back to False in its finally-clause while the hotkey thread may
+        # simultaneously read it in _on_recording_start (to stop any
+        # active playback before starting a new recording).
         self._speaking = False
+        self._speaking_lock = threading.Lock()
         # Auto-stop safety net: when toggle-mode recording has been running
         # for this many seconds, we force-stop it. Prevents a forgotten-about
         # recording from eating unbounded RAM and making Whisper chug for
@@ -257,7 +262,10 @@ class BlitztextApp:
                 self._hotkey_listener._reset_active_mode()
                 return
         # Never start recording while TTS is speaking — stop TTS first.
-        if self._speaking:
+        # Read under the lock so we don't race with the TTS on_done callback.
+        with self._speaking_lock:
+            still_speaking = self._speaking
+        if still_speaking:
             self._stop_tts()
         try:
             self._recorder.start()
@@ -397,8 +405,14 @@ class BlitztextApp:
         interrupting what's being spoken.
         """
         log("TTS start")
-        if self._speaking:
-            # Shouldn't happen with toggle semantics, but guard anyway.
+        with self._speaking_lock:
+            if self._speaking:
+                # Shouldn't happen under toggle semantics (the hotkey would've
+                # fired stop instead), but guard against re-entry anyway.
+                already_speaking = True
+            else:
+                already_speaking = False
+        if already_speaking:
             self._stop_tts()
             return
 
@@ -425,12 +439,14 @@ class BlitztextApp:
             language=self._cfg.get("language", "de"),
         )
 
-        self._speaking = True
+        with self._speaking_lock:
+            self._speaking = True
         self._invoke_main(lambda: self._set_state("speaking"))
         log(f"  → speaking {len(text)} chars")
 
         def on_done():
-            self._speaking = False
+            with self._speaking_lock:
+                self._speaking = False
             # Clear the listener's active-mode flag so the next press starts fresh
             # (normally the stop-toggle does this, but natural end-of-speech doesn't
             # go through the hotkey path).
@@ -452,7 +468,8 @@ class BlitztextApp:
         # The provider's on_finished callback will flip _speaking back to False
         # and set idle state. As a belt-and-suspenders we also do it here in case
         # stop() interrupts before the worker thread runs its finally clause.
-        self._speaking = False
+        with self._speaking_lock:
+            self._speaking = False
         self._invoke_main(lambda: self._set_state("idle"))
 
     def _open_home(self, anchor) -> None:
@@ -465,7 +482,9 @@ class BlitztextApp:
 
     def _home_status(self) -> str:
         """Map internal state to the status shown in the home window."""
-        if self._speaking:
+        with self._speaking_lock:
+            speaking = self._speaking
+        if speaking:
             return "speaking"
         if self._processing:
             return "processing"

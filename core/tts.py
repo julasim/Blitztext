@@ -59,7 +59,6 @@ class _SapiProvider(TTSProvider):
         self._lock = threading.Lock()
         self._worker: Optional[threading.Thread] = None
         self._engine = None
-        self._cancelled = False
 
     # -- helpers -----------------------------------------------------------
 
@@ -109,9 +108,6 @@ class _SapiProvider(TTSProvider):
         # Any previous playback has to be torn down first.
         self.stop()
 
-        with self._lock:
-            self._cancelled = False
-
         def _run():
             try:
                 engine = self._build_engine()
@@ -139,7 +135,6 @@ class _SapiProvider(TTSProvider):
 
     def stop(self) -> None:
         with self._lock:
-            self._cancelled = True
             eng = self._engine
         if eng is not None:
             try:
