@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
-from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QGuiApplication
-from PyQt6.QtCore import pyqtSignal, QObject, QRectF, QRect, Qt
+from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QGuiApplication, QPolygonF
+from PyQt6.QtCore import pyqtSignal, QObject, QRectF, QRect, QPointF, Qt
 
 from core.log import log
 
@@ -112,7 +112,15 @@ class SystemTray:
         p = QPainter(pixmap)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        if state in ("recording", "speaking"):
+        # "speaking" gets a visually distinct speaker glyph — v1.0.19's tray
+        # reused the filled mic for both "recording" and "speaking", which
+        # made the two states indistinguishable at a glance.
+        if state == "speaking":
+            self._draw_speaker_glyph(p, size, palette["recording"])
+            p.end()
+            return QIcon(pixmap)
+
+        if state == "recording":
             stroke_color = palette["recording"]
             fill_color = palette["recording"]
             stroke_w = 4.0
@@ -159,6 +167,37 @@ class SystemTray:
 
         p.end()
         return QIcon(pixmap)
+
+    @staticmethod
+    def _draw_speaker_glyph(p: QPainter, size: int, color: QColor) -> None:
+        """Filled speaker cone + three sound waves. Same visual weight as the
+        mic icon so state switches don't feel jumpy in the tray."""
+        cx = size / 2
+        cy = size / 2
+
+        p.setBrush(QBrush(color))
+        p.setPen(Qt.PenStyle.NoPen)
+
+        # Speaker body (small rectangle)
+        body = QRectF(cx - 18, cy - 7, 9, 14)
+        p.drawRect(body)
+
+        # Cone (trapezoid)
+        horn = QPolygonF([
+            QPointF(cx - 9, cy - 7),
+            QPointF(cx - 1, cy - 16),
+            QPointF(cx - 1, cy + 16),
+            QPointF(cx - 9, cy + 7),
+        ])
+        p.drawPolygon(horn)
+
+        # Three sound waves on the right
+        pen = QPen(color, 3.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for r in (7, 13, 19):
+            arc = QRectF(cx + 2 - r, cy - r, r * 2, r * 2)
+            p.drawArc(arc, -45 * 16, 90 * 16)
 
     def _set_icon(self, state: str) -> None:
         icon = self._create_mic_icon(state)

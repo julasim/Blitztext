@@ -43,9 +43,10 @@ HAIRLINE   = "rgba(30, 32, 38, 14)"
 HOTKEY_BG  = "#DBDEE3"
 HOTKEY_FG  = "#3B3E44"
 QUIT_HOV   = "rgba(230, 66, 66, 0.08)"
-ACCENT_OK  = "#34C759"   # Apple green
-ACCENT_BUSY = "#F1C14A"  # warm yellow
-ACCENT_REC = "#FF5A5F"   # red
+ACCENT_OK  = "#34C759"   # Apple green — idle / ready
+ACCENT_BUSY = "#F1C14A"  # warm yellow — processing / loading model
+ACCENT_REC = "#FF5A5F"   # red — recording (app is listening)
+ACCENT_SPK = "#5AC8FA"   # Apple-system blue — speaking (app is talking)
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +313,7 @@ class HomeWindow(QWidget):
             self._status_dot.set_color(QColor(ACCENT_BUSY))
             self._status_label.setText("Verarbeitung")
         elif state == "speaking":
-            self._status_dot.set_color(QColor(ACCENT_REC))
+            self._status_dot.set_color(QColor(ACCENT_SPK))
             self._status_label.setText("Liest vor")
         elif state == "loading":
             self._status_dot.set_color(QColor(ACCENT_BUSY))

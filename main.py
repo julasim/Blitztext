@@ -114,6 +114,12 @@ class BlitztextApp:
         # TTS playback is mutually exclusive with dictation — tracked via
         # self._speaking + the hotkey listener's single active mode.
         self._speaking = False
+        # Auto-stop safety net: when toggle-mode recording has been running
+        # for this many seconds, we force-stop it. Prevents a forgotten-about
+        # recording from eating unbounded RAM and making Whisper chug for
+        # hours. The AudioRecorder has its own deeper cap as a second line.
+        self._max_recording_sec = 600  # 10 minutes
+        self._max_duration_timer: threading.Timer | None = None
         self._tts = make_tts_provider(
             provider=self._cfg.get("tts_provider", "sapi"),
             voice_id=self._cfg.get("tts_voice", ""),
@@ -263,9 +269,55 @@ class BlitztextApp:
             return
         self._invoke_main(lambda: self._set_state("recording"))
         self._invoke_main(self._recording_overlay.show_overlay)
+        self._arm_max_duration_timer(mode)
+
+    # ---- Max-recording auto-stop -----------------------------------------
+
+    def _arm_max_duration_timer(self, mode: int) -> None:
+        """Start the safety timer that force-stops recording after N seconds."""
+        self._cancel_max_duration_timer()
+        t = threading.Timer(
+            self._max_recording_sec,
+            self._auto_stop_recording, args=(mode,),
+        )
+        t.daemon = True
+        self._max_duration_timer = t
+        t.start()
+
+    def _cancel_max_duration_timer(self) -> None:
+        t = self._max_duration_timer
+        if t is not None:
+            try:
+                t.cancel()
+            except Exception:
+                pass
+            self._max_duration_timer = None
+
+    def _auto_stop_recording(self, mode: int) -> None:
+        """Timer callback: if still recording this mode, stop it cleanly and notify the user."""
+        log(f"Auto-stop timer fired for mode {mode}")
+        if not self._recorder.is_recording:
+            return
+        # Notify the user that we stopped for them — this is the only path
+        # where the recording ends without a key press, so it's worth a toast.
+        minutes = self._max_recording_sec // 60
+        self._invoke_main(lambda: self._tray.show_message(
+            "Blitztext",
+            f"Aufnahme automatisch beendet — Maximaldauer von {minutes} Minuten erreicht.",
+        ))
+        # Clear the listener state so the next hotkey press starts a new recording
+        # (without it, the next press would be interpreted as the STOP of the
+        # still-active toggle, and nothing would happen).
+        try:
+            self._hotkey_listener._reset_active_mode()
+        except Exception:
+            pass
+        # Reuse the normal stop path so transcription + injection still run.
+        self._on_recording_stop(mode)
 
     def _on_recording_stop(self, mode: int) -> None:
         log(f"Hotkey stop — mode={mode}")
+        self._cancel_max_duration_timer()
         self._invoke_main(self._recording_overlay.hide_overlay)
         audio = self._recorder.stop()
         import numpy as _np
@@ -531,6 +583,7 @@ class BlitztextApp:
             self._tts.stop()
         except Exception:
             pass
+        self._cancel_max_duration_timer()
 
     def _invoke_main(self, fn) -> None:
         """Run a callable on the Qt main thread (thread-safe via pyqtSignal)."""
