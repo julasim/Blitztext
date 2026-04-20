@@ -32,7 +32,22 @@ from core.log import log
 class TTSProvider:
     """Interface every TTS backend implements."""
 
-    def speak(self, text: str, on_finished: Callable[[], None]) -> None:
+    def speak(
+        self,
+        text: str,
+        on_finished: Callable[[], None],
+        on_error: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        """Start playback.
+
+        ``on_finished`` always fires exactly once when the worker exits,
+        whether that was a natural end or a cancelled/failed playback.
+
+        ``on_error(message)`` fires only when the backend couldn't produce
+        any audio at all (e.g. voice file missing, onnxruntime crash).
+        Hosts use it to surface a user-visible error so the user isn't
+        left wondering why they pressed Strg+Alt+4 and nothing happened.
+        """
         raise NotImplementedError
 
     def stop(self) -> None:
@@ -103,7 +118,12 @@ class _SapiProvider(TTSProvider):
 
     # -- public API --------------------------------------------------------
 
-    def speak(self, text: str, on_finished: Callable[[], None]) -> None:
+    def speak(
+        self,
+        text: str,
+        on_finished: Callable[[], None],
+        on_error: Optional[Callable[[str], None]] = None,
+    ) -> None:
         text = (text or "").strip()
         if not text:
             log("tts: empty text, skipping")
@@ -114,6 +134,7 @@ class _SapiProvider(TTSProvider):
         self.stop()
 
         def _run():
+            err: Optional[str] = None
             try:
                 engine = self._build_engine()
                 with self._lock:
@@ -126,10 +147,16 @@ class _SapiProvider(TTSProvider):
                 except Exception:
                     pass
             except Exception as e:
-                log(f"tts: SAPI crashed: {type(e).__name__}: {e}")
+                err = f"SAPI: {type(e).__name__}: {e}"
+                log(f"tts: SAPI crashed: {err}")
             finally:
                 with self._lock:
                     self._engine = None
+                if err and on_error is not None:
+                    try:
+                        on_error(err)
+                    except Exception as e:
+                        log(f"tts: on_error raised: {type(e).__name__}: {e}")
                 try:
                     on_finished()
                 except Exception as e:
@@ -228,7 +255,12 @@ class _PiperProvider(TTSProvider):
 
     # -- public API --------------------------------------------------------
 
-    def speak(self, text: str, on_finished: Callable[[], None]) -> None:
+    def speak(
+        self,
+        text: str,
+        on_finished: Callable[[], None],
+        on_error: Optional[Callable[[str], None]] = None,
+    ) -> None:
         text = (text or "").strip()
         if not text:
             log("tts(piper): empty text, skipping")
@@ -240,6 +272,7 @@ class _PiperProvider(TTSProvider):
         self._cancel.clear()
 
         def _run():
+            err: Optional[str] = None
             try:
                 import sounddevice as sd
                 self._ensure_voice()
@@ -251,13 +284,30 @@ class _PiperProvider(TTSProvider):
                     try:
                         sd.play(chunk.audio_int16_array, chunk.sample_rate, blocking=True)
                     except Exception as e:
+                        err = f"Audioausgabe fehlgeschlagen: {e}"
                         log(f"tts(piper): sd.play failed: {type(e).__name__}: {e}")
                         break
                     if self._cancel.is_set():
                         break
+            except FileNotFoundError as e:
+                # Voice model missing (deleted between install and use)
+                err = (f"Piper-Stimme nicht gefunden: {self._voice_id!r}. "
+                       f"Bitte in Einstellungen neu wählen und speichern.")
+                log(f"tts(piper): voice file missing: {e}")
+            except ImportError as e:
+                err = f"Piper nicht verfügbar: {e}. Fallback auf SAPI-Stimme."
+                log(f"tts(piper): import failure: {e}")
             except Exception as e:
+                # onnxruntime errors, corrupted .onnx, espeak-ng data missing, …
+                err = (f"Piper konnte nicht vorlesen ({type(e).__name__}). "
+                       f"Versuche die Stimme in Einstellungen neu zu laden.")
                 log(f"tts(piper): synthesis crashed: {type(e).__name__}: {e}")
             finally:
+                if err and on_error is not None:
+                    try:
+                        on_error(err)
+                    except Exception as e:
+                        log(f"tts(piper): on_error raised: {type(e).__name__}: {e}")
                 try:
                     on_finished()
                 except Exception as e:

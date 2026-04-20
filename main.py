@@ -102,7 +102,11 @@ class BlitztextApp:
         self._tray.signals.open_home.connect(self._open_home)
 
         self._settings_window: SettingsWindow | None = None
-        self._download_dialog: DownloadDialog | None = None
+        # Separate dialog slots so a Whisper model download and a Piper voice
+        # download can coexist (e.g. user changes both in one Settings save)
+        # without overwriting each other's progress dialog reference.
+        self._download_dialog: DownloadDialog | None = None        # Whisper model
+        self._voice_download_dialog: DownloadDialog | None = None # Piper voice
         self._recording_overlay = RecordingOverlay()
 
         # Home popup — shown on tray left-click. One instance, reused across opens.
@@ -458,7 +462,11 @@ class BlitztextApp:
             self._invoke_main(lambda: self._set_state("idle"))
             log("TTS finished")
 
-        self._tts.speak(text, on_finished=on_done)
+        def on_error(message: str):
+            # Surface backend failures so the user knows why Strg+Alt+4 went silent.
+            self._invoke_main(lambda: self._tray.show_message("Blitztext – Vorlesen", message))
+
+        self._tts.speak(text, on_finished=on_done, on_error=on_error)
 
     def _stop_tts(self) -> None:
         log("TTS stop")
@@ -568,8 +576,12 @@ class BlitztextApp:
             return
 
         log(f"piper voice {voice_id!r} missing — starting download")
+        # Uses a dedicated slot so the Whisper model download (which lives
+        # in self._download_dialog) can't overwrite this one if the user
+        # changed both the Whisper model and the Piper voice in a single
+        # Settings save.
         dialog = DownloadDialog(voice_id)
-        self._download_dialog = dialog
+        self._voice_download_dialog = dialog
 
         def worker():
             try:
@@ -588,8 +600,16 @@ class BlitztextApp:
         dialog.raise_()
         threading.Thread(target=worker, daemon=True).start()
 
+    def _close_voice_download_dialog(self) -> None:
+        if self._voice_download_dialog is not None:
+            try:
+                self._voice_download_dialog.close()
+            except Exception:
+                pass
+            self._voice_download_dialog = None
+
     def _on_voice_downloaded(self) -> None:
-        self._close_download_dialog()
+        self._close_voice_download_dialog()
         self._tray.show_message(
             "Blitztext", "Piper-Stimme geladen. Vorlesen bereit."
         )
@@ -602,7 +622,7 @@ class BlitztextApp:
         )
 
     def _on_voice_download_error(self, error: str) -> None:
-        self._close_download_dialog()
+        self._close_voice_download_dialog()
         self._tray.show_message(
             "Blitztext – Fehler",
             f"Piper-Stimme konnte nicht geladen werden:\n{error}",
