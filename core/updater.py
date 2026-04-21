@@ -5,7 +5,7 @@ import httpx
 
 
 GITHUB_REPO = "julasim/Blitztext"
-CURRENT_VERSION = "1.0.24"
+CURRENT_VERSION = "1.0.25"
 
 
 @dataclass
