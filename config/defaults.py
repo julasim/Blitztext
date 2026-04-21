@@ -1,4 +1,4 @@
-# --- Default LLM system prompts for modes 2 & 3 ---
+# --- Default LLM system prompts for modes 2, 3 and 5 ---
 # These are editable in Settings; the defaults below are what the app ships
 # with and also the values the "Auf Standard zurücksetzen"-button restores.
 
@@ -16,6 +16,28 @@ DEFAULT_PROMPT_MODE3 = (
     "Gib NUR den umformulierten Text zurück, keine Erklärungen."
 )
 
+DEFAULT_PROMPT_MODE5 = (
+    "Du bist ein Assistent für Obsidian-Notizen. Der User hat seine Gedanken "
+    "frei diktiert. Formatiere sie als gut lesbare Notiz für Obsidian in Markdown.\n\n"
+    "REGELN:\n"
+    "- Entscheide SELBST, ob Fließtext (ganze Sätze) oder Stichpunkte "
+    "(- Liste) passender sind – je nach Inhalt. Strukturierte Aufzählungen "
+    "→ Stichpunkte. Zusammenhängende Ideen → Fließtext. Beides mischen ist "
+    "erlaubt, wenn es den Inhalt klarer macht.\n"
+    "- Nutze Markdown: `## Überschrift` wenn sinnvoll, **fett** für "
+    "Schlüsselbegriffe, `Code` für Befehle / Pfade / Dateinamen, > für Zitate.\n"
+    "- Erkenne und korrigiere typische Transkriptionsfehler bei Tech-Begriffen: "
+    "Anthropic, Claude, Claude Code, GPT, GPT-4, GPT-5, OpenAI, Gemini, "
+    "LLM, API, SDK, MCP, Obsidian, Cursor, VS Code, Python, TypeScript, "
+    "JavaScript, Markdown, Whisper, Ollama, OpenRouter, HuggingFace, "
+    "GitHub, Docker, Kubernetes, PyQt, npm, Node.js.\n"
+    "- Entferne Füllwörter (äh, ähm, halt, sozusagen, also) und korrigiere "
+    "offensichtliche Versprecher.\n"
+    "- Behalte den Kerninhalt – erfinde nichts dazu.\n"
+    "- KEINE Meta-Einleitung (kein 'Hier ist deine Notiz…'). Gib NUR die "
+    "formatierte Notiz zurück."
+)
+
 
 DEFAULTS = {
     "version": "1.0.0",
@@ -24,14 +46,17 @@ DEFAULTS = {
     "hotkey_mode3": "ctrl+alt+3",
     # Mode 4 = TTS (read selected / clipboard text aloud)
     "hotkey_mode4": "ctrl+alt+4",
+    # Mode 5 = Obsidian note formatting (LLM decides prose vs bullet points)
+    "hotkey_mode5": "ctrl+alt+5",
     "whisper_model": "medium",
     "language": "de",
     "llm_provider": "openrouter",
     "llm_model": "google/gemini-2.0-flash-001",
     "start_with_windows": True,
-    # User-editable system prompts for the two LLM modes.
+    # User-editable system prompts for the LLM modes.
     "llm_prompt_mode2": DEFAULT_PROMPT_MODE2,
     "llm_prompt_mode3": DEFAULT_PROMPT_MODE3,
+    "llm_prompt_mode5": DEFAULT_PROMPT_MODE5,
     # TTS settings — provider pattern mirrors llm_provider so we can add
     # Edge TTS / OpenAI TTS later without restructuring.
     "tts_provider": "sapi",        # sapi | (future: edge, openai)

@@ -12,6 +12,7 @@ from config.defaults import (
     WHISPER_MODELS,
     DEFAULT_PROMPT_MODE2,
     DEFAULT_PROMPT_MODE3,
+    DEFAULT_PROMPT_MODE5,
     TTS_PROVIDER_LABELS,
     TTS_DEFAULT_VOICE,
 )
@@ -333,6 +334,10 @@ class SettingsWindow(QWidget):
 
         self._badge4 = HotkeyBadge(self._config.get("hotkey_mode4", "ctrl+alt+4"))
         layout.addLayout(self._hotkey_row("Vorlesen", "Markierten Text vorlesen lassen", self._badge4))
+        layout.addWidget(_hairline())
+
+        self._badge5 = HotkeyBadge(self._config.get("hotkey_mode5", "ctrl+alt+5"))
+        layout.addLayout(self._hotkey_row("Obsidian-Notiz", "Notiz-Gedanken für Obsidian formatieren", self._badge5))
 
         # --- PROVIDER ---
         layout.addWidget(_section_label("LLM PROVIDER"))
@@ -366,7 +371,7 @@ class SettingsWindow(QWidget):
         self._on_provider_changed()
 
         # --- LLM-PROMPTS ---
-        # Editable system prompts that the LLM receives for modes 2 & 3.
+        # Editable system prompts that the LLM receives for modes 2, 3 and 5.
         # A "Zurücksetzen" button next to each section restores the default.
         layout.addWidget(_section_label("LLM-PROMPTS"))
 
@@ -383,6 +388,14 @@ class SettingsWindow(QWidget):
             subtitle="Frust rein. Entspannt raus. (Modus 3)",
             initial=self._config.get("llm_prompt_mode3", DEFAULT_PROMPT_MODE3),
             default=DEFAULT_PROMPT_MODE3,
+            layout=layout,
+        )
+        layout.addWidget(_hairline())
+        self._prompt5_edit = self._build_prompt_editor(
+            title="Obsidian-Notiz",
+            subtitle="Notiz-Gedanken als Markdown. (Modus 5)",
+            initial=self._config.get("llm_prompt_mode5", DEFAULT_PROMPT_MODE5),
+            default=DEFAULT_PROMPT_MODE5,
             layout=layout,
         )
 
@@ -669,7 +682,7 @@ class SettingsWindow(QWidget):
         self._tts_voice_combo.blockSignals(False)
 
     def closeEvent(self, event) -> None:
-        for badge in (self._badge1, self._badge2, self._badge3, self._badge4):
+        for badge in (self._badge1, self._badge2, self._badge3, self._badge4, self._badge5):
             try:
                 badge.stop_listening()
             except Exception:
@@ -680,8 +693,9 @@ class SettingsWindow(QWidget):
         from PyQt6.QtWidgets import QMessageBox
 
         hotkeys = [self._badge1.hotkey, self._badge2.hotkey,
-                   self._badge3.hotkey, self._badge4.hotkey]
-        if len(set(hotkeys)) < 4:
+                   self._badge3.hotkey, self._badge4.hotkey,
+                   self._badge5.hotkey]
+        if len(set(hotkeys)) < 5:
             QMessageBox.warning(self, "Konflikt", "Jeder Modus braucht einen eigenen Hotkey.")
             return
 
@@ -706,6 +720,7 @@ class SettingsWindow(QWidget):
         # of sending an empty system prompt to the LLM.
         prompt2 = self._prompt2_edit.toPlainText().strip() or DEFAULT_PROMPT_MODE2
         prompt3 = self._prompt3_edit.toPlainText().strip() or DEFAULT_PROMPT_MODE3
+        prompt5 = self._prompt5_edit.toPlainText().strip() or DEFAULT_PROMPT_MODE5
 
         lang_map = {"Deutsch": "de", "Englisch": "en", "Automatisch": "auto"}
         tts_provider = self._current_tts_provider()
@@ -715,6 +730,7 @@ class SettingsWindow(QWidget):
             "hotkey_mode2": self._badge2.hotkey,
             "hotkey_mode3": self._badge3.hotkey,
             "hotkey_mode4": self._badge4.hotkey,
+            "hotkey_mode5": self._badge5.hotkey,
             "llm_provider": current,
             "llm_model": self._llm_model_input.text().strip(),
             "whisper_model": self._whisper_combo.currentData() or "medium",
@@ -723,6 +739,7 @@ class SettingsWindow(QWidget):
             "provider_keys": dict(self._key_edits),
             "llm_prompt_mode2": prompt2,
             "llm_prompt_mode3": prompt3,
+            "llm_prompt_mode5": prompt5,
             "tts_provider": tts_provider,
             "tts_voice": tts_voice,
             "tts_rate": self._tts_rate_combo.currentData() or 0,

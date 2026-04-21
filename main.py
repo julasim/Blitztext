@@ -217,19 +217,21 @@ class BlitztextApp:
         h2 = self._cfg.get("hotkey_mode2", "ctrl+alt+2")
         h3 = self._cfg.get("hotkey_mode3", "ctrl+alt+3")
         h4 = self._cfg.get("hotkey_mode4", "ctrl+alt+4")
-        log(f"Register hotkeys: mode1={h1} mode2={h2} mode3={h3} mode4={h4}")
+        h5 = self._cfg.get("hotkey_mode5", "ctrl+alt+5")
+        log(f"Register hotkeys: mode1={h1} mode2={h2} mode3={h3} mode4={h4} mode5={h5}")
         self._hotkey_listener.register(h1, 1)
         self._hotkey_listener.register(h2, 2)
         self._hotkey_listener.register(h3, 3)
         self._hotkey_listener.register(h4, 4)
+        self._hotkey_listener.register(h5, 5)
 
     # ---- Hotkey dispatcher (toggle semantics) -----------------------------
 
     def _on_hotkey_start(self, mode: int) -> None:
         """First press of a hotkey — begin the corresponding action.
 
-        Modes 1-3: start audio recording.
-        Mode 4:    snapshot selection and start TTS playback.
+        Modes 1, 2, 3, 5: start audio recording (2/3/5 post-process via LLM).
+        Mode 4:          snapshot selection and start TTS playback.
         """
         if mode == 4:
             self._start_tts()
@@ -243,7 +245,7 @@ class BlitztextApp:
         else:
             self._on_recording_stop(mode)
 
-    # ---- Dictation (modes 1-3) --------------------------------------------
+    # ---- Dictation (modes 1, 2, 3, 5) -------------------------------------
 
     def _on_recording_start(self, mode: int) -> None:
         log(f"Hotkey pressed — mode={mode} model_loaded={self._transcriber.is_loaded} processing={self._processing}")
@@ -255,7 +257,7 @@ class BlitztextApp:
             ))
             return
         # Warn up-front if LLM modes lack an API key, so user doesn't waste a recording
-        if mode in (2, 3) and not self._api_key:
+        if mode in (2, 3, 5) and not self._api_key:
             log(f"  → ignoring, no API key for mode {mode}")
             self._hotkey_listener._reset_active_mode()
             self._invoke_main(lambda: self._tray.show_message(
@@ -359,7 +361,7 @@ class BlitztextApp:
                 ))
                 return
 
-            if mode in (2, 3):
+            if mode in (2, 3, 5):
                 provider = self._cfg.get("llm_provider", "openrouter")
                 log(f"LLM mode {mode} via {provider} (key set: {bool(self._api_key)})")
                 if not self._api_key:
@@ -369,7 +371,7 @@ class BlitztextApp:
                     return
                 # Per-mode user-edited system prompt (blank → process_text
                 # falls back to the built-in default for that mode).
-                prompt_key = "llm_prompt_mode2" if mode == 2 else "llm_prompt_mode3"
+                prompt_key = f"llm_prompt_mode{mode}"
                 custom_prompt = self._cfg.get(prompt_key, "")
                 text = process_text(
                     text, mode, provider, self._api_key,

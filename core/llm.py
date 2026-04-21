@@ -1,6 +1,10 @@
 import httpx
 
-from config.defaults import DEFAULT_PROMPT_MODE2, DEFAULT_PROMPT_MODE3
+from config.defaults import (
+    DEFAULT_PROMPT_MODE2,
+    DEFAULT_PROMPT_MODE3,
+    DEFAULT_PROMPT_MODE5,
+)
 
 
 # Fallback prompts, used only when the caller doesn't pass a prompt in (e.g.
@@ -10,6 +14,7 @@ from config.defaults import DEFAULT_PROMPT_MODE2, DEFAULT_PROMPT_MODE3
 SYSTEM_PROMPTS = {
     2: DEFAULT_PROMPT_MODE2,
     3: DEFAULT_PROMPT_MODE3,
+    5: DEFAULT_PROMPT_MODE5,
 }
 
 TIMEOUT = 30.0

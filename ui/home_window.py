@@ -53,7 +53,7 @@ ACCENT_SPK = "#5AC8FA"   # Apple-system blue — speaking (app is talking)
 # Mode catalogue
 # ---------------------------------------------------------------------------
 # Taglines follow the product brief ("Sprache rein. Text raus." etc).
-# The LLM system prompts for modes 2 and 3 live in core/llm.py — the
+# The LLM system prompts for modes 2, 3 and 5 live in core/llm.py — the
 # labels here are descriptive, not derived from that code.
 
 MODES = [
@@ -61,6 +61,7 @@ MODES = [
     {"id": 2, "title": "Blitztext+",    "subtitle": "Geschrieben sprechen.",         "icon": "mic_plus"},
     {"id": 3, "title": "Blitztext $%&!", "subtitle": "Frust rein. Entspannt raus.",   "icon": "mic_filter"},
     {"id": 4, "title": "Vorlesen",      "subtitle": "Text markieren, Blitztext liest.", "icon": "speaker"},
+    {"id": 5, "title": "Obsidian-Notiz", "subtitle": "Gedanken → Markdown-Notiz.",   "icon": "mic_note"},
 ]
 
 
@@ -157,6 +158,14 @@ class ModeIcon(QLabel):
             p.drawLine(16, 4, 21, 4)
             p.drawLine(15, 7, 21, 7)
             p.drawLine(17, 10, 21, 10)
+        elif self._kind == "mic_note":
+            # Small document glyph with lines → "notes". Sits just right of
+            # the mic capsule (cap right edge = x=15) so the outlines don't
+            # visibly overlap.
+            p.drawRoundedRect(QRectF(15.5, 4.0, 5.5, 8.0), 1, 1)
+            p.drawLine(17, 6, 19, 6)
+            p.drawLine(17, 8, 19, 8)
+            p.drawLine(17, 10, 18, 10)
 
     def _draw_speaker(self, p: QPainter) -> None:
         # Speaker cone on the left (small square + triangular horn), three
@@ -259,7 +268,7 @@ class HomeWindow(QWidget):
     # window to the rounded-rect shape at OS level — only the card
     # outline reaches the screen regardless of backing-store opacity.
     CARD_W = 340
-    CARD_H = 360   # +60 for the new "Vorlesen" row + its divider
+    CARD_H = 417   # +57 per mode row incl. divider (now 5 modes)
     CARD_RADIUS = 14
     WIDTH  = CARD_W
     HEIGHT = CARD_H
@@ -302,6 +311,7 @@ class HomeWindow(QWidget):
         self._row2.set_hotkey(self._config.get("hotkey_mode2", "ctrl+alt+2"))
         self._row3.set_hotkey(self._config.get("hotkey_mode3", "ctrl+alt+3"))
         self._row4.set_hotkey(self._config.get("hotkey_mode4", "ctrl+alt+4"))
+        self._row5.set_hotkey(self._config.get("hotkey_mode5", "ctrl+alt+5"))
 
     def set_state(self, state: str) -> None:
         """State-driven status pill: idle / loading / recording / processing / speaking."""
@@ -451,6 +461,7 @@ class HomeWindow(QWidget):
         self._row2 = ModeRow(MODES[1], self._config.get("hotkey_mode2", "ctrl+alt+2"))
         self._row3 = ModeRow(MODES[2], self._config.get("hotkey_mode3", "ctrl+alt+3"))
         self._row4 = ModeRow(MODES[3], self._config.get("hotkey_mode4", "ctrl+alt+4"))
+        self._row5 = ModeRow(MODES[4], self._config.get("hotkey_mode5", "ctrl+alt+5"))
         lay.addWidget(self._row1)
         lay.addWidget(self._hairline())
         lay.addWidget(self._row2)
@@ -458,6 +469,8 @@ class HomeWindow(QWidget):
         lay.addWidget(self._row3)
         lay.addWidget(self._hairline())
         lay.addWidget(self._row4)
+        lay.addWidget(self._hairline())
+        lay.addWidget(self._row5)
 
         lay.addStretch(1)
 
