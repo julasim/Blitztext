@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 *.egg-info/
 .venv/
+.venv-sidecar/
 venv/
 env/
 
@@ -13,6 +14,14 @@ dist/
 dist-installer/
 *.manifest
 *.spec.bak
+
+# Tauri / React / Node (new app/ tree)
+app/node_modules/
+app/dist/
+app/src-tauri/target/
+app/src-tauri/binaries/
+app/.vite/
+app/*.log
 
 # Downloaded Whisper models (too large for git, auto-downloaded on first run)
 models/*

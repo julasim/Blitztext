@@ -1,0 +1,28 @@
+# Blitztext Sidecar — Python dependencies
+#
+# Target Python: 3.11 (pyannote.audio 3.x + torch 2.4 are stabilized on 3.11;
+# Python 3.14 has no torch wheels yet as of 2026-04).
+#
+# Install:
+#   py -3.11 -m venv .venv-sidecar
+#   .venv-sidecar\Scripts\activate
+#   pip install --upgrade pip
+#   pip install -r sidecar/requirements.txt --index-url https://download.pytorch.org/whl/cu121 --extra-index-url https://pypi.org/simple
+
+# --- Core runtime (sidecar stub can run on anything ≥3.9) ---
+httpx>=0.27.0
+numpy>=1.24.0
+keyring>=25.0.0
+
+# --- Transcription (reused from legacy core/) ---
+faster-whisper>=1.0.0
+soundfile>=0.12.1
+librosa>=0.10.2   # only used for resampling; avoid its audioread fallback
+
+# --- Diarization (heavy; requires HF token for gated models) ---
+pyannote.audio>=3.3.0,<3.4.0
+torch>=2.4.0,<2.5.0
+torchaudio>=2.4.0,<2.5.0
+
+# --- Packaging (dev-only) ---
+pyinstaller>=6.6.0
