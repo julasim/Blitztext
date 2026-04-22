@@ -13,6 +13,11 @@ from pathlib import Path
 
 from sidecar import rpc
 
+# Side-effect import: registers all @method handlers (config.get,
+# meeting.*, speaker.*, cleanup.*, …). Keep this after rpc so the
+# decorator is available.
+from sidecar import methods  # noqa: F401
+
 
 def _setup_logging() -> Path:
     """Log to %APPDATA%\\Blitztext\\sidecar.log so a production run leaves

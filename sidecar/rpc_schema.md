@@ -19,16 +19,16 @@ Transport: line-delimited JSON-RPC 2.0 over stdin/stdout of the sidecar process.
 | Status | Method | Request | Response |
 |---|---|---|---|
 | ✅ | `ping` | — | `{ok, version}` |
-| ⬜ | `config.get` | — | `{models_dir, appdata, cuda_available, ollama_available, whisper_models[]}` |
-| ⬜ | `meeting.import_file` | `{path, title?}` | `{meeting_id}` |
-| ⬜ | `meeting.list` | `{limit?, offset?}` | `Meeting[]` |
-| ⬜ | `meeting.get` | `{id}` | `MeetingFull` |
-| ⬜ | `meeting.delete` | `{id}` | `{ok}` |
-| ⬜ | `meeting.set_title` | `{id, title}` | `{ok}` |
-| ⬜ | `speaker.rename` | `{meeting_id, speaker_id, name}` | `{ok}` |
-| ⬜ | `speaker.merge` | `{meeting_id, source_id, target_id}` | `{ok, merged_turns}` |
+| ✅ | `config.get` | — | `{appdata, models_dir, meetings_dir, db_path, cuda_available, ollama_available, whisper_models[], python_executable}` |
+| 🚧 | `meeting.import_file` | `{path, title?}` | `{meeting_id}` — stub, needs torch+pyannote |
+| ✅ | `meeting.list` | `{limit?, offset?}` | `MeetingListItem[]` |
+| ✅ | `meeting.get` | `{id}` | `MeetingFull` |
+| ✅ | `meeting.delete` | `{id}` | `{ok}` |
+| ✅ | `meeting.set_title` | `{id, title}` | `{ok}` |
+| ✅ | `speaker.rename` | `{meeting_id, speaker_id, name}` | `{ok}` |
+| ✅ | `speaker.merge` | `{meeting_id, source_id, target_id}` | `{ok, merged_turns}` |
 | ⬜ | `speaker.sample` | `{meeting_id, speaker_id, max_sec?}` | `{wav_path}` |
-| ⬜ | `cleanup.run` | `{meeting_id, model?}` | `{ok}` |
+| 🚧 | `cleanup.run` | `{meeting_id, model?}` | `{ok}` — stub, needs Ollama wiring |
 | ⬜ | `cleanup.status` | `{meeting_id}` | `{state, progress}` |
 | ⬜ | `export.markdown` | `{meeting_id, use_cleanup, path}` | `{ok, bytes}` |
 | ⬜ | `settings.update` | `{...}` | `{ok}` |
