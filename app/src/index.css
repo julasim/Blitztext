@@ -1,0 +1,47 @@
+/* Global reset + base styles. Design tokens live in styles/tokens.css. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-app);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  color: var(--bt-ink);
+  background: var(--bt-white);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-synthesis: none;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: var(--fw-semibold);
+  color: var(--bt-ink);
+  letter-spacing: -0.1px;
+}
+
+p {
+  margin: 0;
+}
+
+code {
+  font-family: var(--font-mono);
+}
+
+button {
+  font-family: inherit;
+}
