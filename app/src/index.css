@@ -1,6 +1,14 @@
 /* Global reset + base styles. Design tokens live in styles/tokens.css. */
 
-* {
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "./styles/tokens.css";
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -10,6 +18,7 @@ body,
   margin: 0;
   padding: 0;
   height: 100%;
+  overflow: hidden;
 }
 
 body {
@@ -44,4 +53,63 @@ code {
 
 button {
   font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+input,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+input:focus-visible,
+button:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Subtle scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--bt-line) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--bt-line);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--bt-subtle);
+  background-clip: content-box;
+  border: 2px solid transparent;
+}
+
+/* Animations. */
+@keyframes bt-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@keyframes bt-spin {
+  to { transform: rotate(360deg); }
+}
+.bt-pulse {
+  animation: bt-pulse 1.2s ease-in-out infinite;
+}
+.bt-spin {
+  animation: bt-spin 0.9s linear infinite;
 }
