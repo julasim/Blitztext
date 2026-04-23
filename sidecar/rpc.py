@@ -202,3 +202,24 @@ def serve_stdio() -> None:
 def _ping() -> dict:
     """Health check. Returns sidecar version. Used by Tauri on startup."""
     return {"ok": True, "version": __version__}
+
+
+# -- In-process invocation (for tests and pipeline internals) --------------
+
+
+def call_method(name: str, params: dict | None = None) -> Any:
+    """Call a registered RPC method synchronously, in the same process.
+
+    Useful for:
+    * smoke tests that want to exercise the same dispatch path as Tauri,
+    * pipeline steps that want to reuse a method (e.g. run cleanup on
+      turns that were just imported).
+
+    Raises ``RpcError`` for RPC-level errors, or whatever the method itself
+    raises for unexpected failures.
+    """
+    fn = _methods.get(name)
+    if fn is None:
+        raise RpcError(METHOD_NOT_FOUND, f"method '{name}' not found")
+    params = params or {}
+    return fn(**params)
