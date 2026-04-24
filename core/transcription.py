@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from typing import Callable, Optional
 
@@ -194,3 +196,73 @@ class Transcriber:
         )
         text = " ".join(seg.text.strip() for seg in segments)
         return text.strip()
+
+    def transcribe_with_words(
+        self,
+        audio: np.ndarray,
+        *,
+        language: str | None = None,
+        on_progress: "Callable[[float], None] | None" = None,
+    ) -> "tuple[list[dict], dict]":
+        """Transcribe + return word-level timestamps.
+
+        Used by the Meeting-Mode pipeline. Unlike ``transcribe()`` (which
+        optimizes for dictation speed), this path enables Whisper's word
+        timestamp prediction (~30 % slower inference, but required for
+        merging with diarization segments).
+
+        Parameters
+        ----------
+        audio:
+            Mono float32 at 16 kHz (see :func:`sidecar.audio_io.load_audio`).
+        language:
+            Override the transcriber's default language (``"de"``, ``"en"``,
+            or ``None`` for auto-detect).
+        on_progress:
+            Optional callback invoked with a 0.0..1.0 value as each segment
+            finishes. Whisper is generator-based, so the fraction is based
+            on the timestamp of the last emitted segment vs. audio duration.
+
+        Returns
+        -------
+        (words, info)
+            ``words`` is a list of ``{"t0": seconds, "t1": seconds, "w": text}``
+            in time order. ``info`` is a small dict with ``language``,
+            ``language_prob``, ``duration``.
+        """
+        if self._model is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
+        if audio.size == 0:
+            return [], {"language": "", "language_prob": 0.0, "duration": 0.0}
+
+        lang = None if (language or self._language) == "auto" else (language or self._language)
+        segments, info = self._model.transcribe(
+            audio,
+            language=lang,
+            beam_size=5,  # better quality for meetings than dictation (=1)
+            vad_filter=True,
+            vad_parameters={"threshold": 0.35, "min_silence_duration_ms": 400},
+            word_timestamps=True,
+            condition_on_previous_text=True,
+        )
+
+        duration = float(info.duration or 0.0)
+        words: list[dict] = []
+        for seg in segments:
+            # Each segment has .words (list[Word]). Some segments may have
+            # None if VAD collapses them — skip defensively.
+            for w in (seg.words or []):
+                # strip() because faster-whisper prefixes words with a
+                # leading space (like SentencePiece output).
+                text = (w.word or "").strip()
+                if not text:
+                    continue
+                words.append({"t0": float(w.start), "t1": float(w.end), "w": text})
+            if on_progress and duration > 0:
+                on_progress(min(1.0, float(seg.end) / duration))
+
+        return words, {
+            "language": info.language,
+            "language_prob": float(info.language_probability or 0.0),
+            "duration": duration,
+        }

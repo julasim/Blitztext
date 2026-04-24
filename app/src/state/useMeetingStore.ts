@@ -6,8 +6,14 @@
 // meta, the full record (with turns + speakers) is lazy-loaded.
 
 import { create } from "zustand";
-import { call } from "../lib/rpc";
+import { call, onEvent } from "../lib/rpc";
 import type { MeetingFull, MeetingListItem } from "../lib/types";
+
+export type ProgressInfo = {
+  stage: "decode" | "transcribe" | "diarize" | "merge" | "persist";
+  pct: number; // 0..1
+  eta_sec?: number | null;
+};
 
 type View =
   | { name: "library" }
@@ -62,6 +68,12 @@ export type State = {
   // Derived helpers
   useCleanup: boolean;
   setUseCleanup: (v: boolean) => void;
+
+  // Per-meeting pipeline progress (keyed by meeting_id). Populated by
+  // sidecar-event subscriptions — see wireSidecarEvents().
+  progress: Record<string, ProgressInfo>;
+  importErrors: Record<string, string>;
+  wireSidecarEvents: () => Promise<() => void>;
 };
 
 export const useMeetingStore = create<State>((set, get) => ({
@@ -187,4 +199,53 @@ export const useMeetingStore = create<State>((set, get) => ({
 
   useCleanup: false,
   setUseCleanup: (v) => set({ useCleanup: v }),
+
+  progress: {},
+  importErrors: {},
+  async wireSidecarEvents() {
+    const offProgress = await onEvent<{
+      meeting_id: string;
+      stage: ProgressInfo["stage"];
+      pct: number;
+      eta_sec?: number;
+    }>("meeting.progress", (p) => {
+      set((s) => ({
+        progress: {
+          ...s.progress,
+          [p.meeting_id]: { stage: p.stage, pct: p.pct, eta_sec: p.eta_sec },
+        },
+      }));
+    });
+    const offDone = await onEvent<{ meeting_id: string }>(
+      "meeting.done",
+      (p) => {
+        // Drop the progress entry + refresh the meeting + the library list.
+        set((s) => {
+          const { [p.meeting_id]: _drop, ...rest } = s.progress;
+          return { progress: rest };
+        });
+        void get().loadMeetings();
+        const active = get().active;
+        if (active?.id === p.meeting_id) void get().loadMeeting(p.meeting_id);
+      },
+    );
+    const offError = await onEvent<{ meeting_id: string; message: string }>(
+      "meeting.error",
+      (p) => {
+        set((s) => ({
+          importErrors: { ...s.importErrors, [p.meeting_id]: p.message },
+          progress: (() => {
+            const { [p.meeting_id]: _drop, ...rest } = s.progress;
+            return rest;
+          })(),
+        }));
+        void get().loadMeetings();
+      },
+    );
+    return () => {
+      offProgress();
+      offDone();
+      offError();
+    };
+  },
 }));

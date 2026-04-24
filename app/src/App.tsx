@@ -25,14 +25,17 @@ export default function App() {
   const view = useMeetingStore((s) => s.view);
   const loadConfig = useMeetingStore((s) => s.loadConfig);
   const loadMeetings = useMeetingStore((s) => s.loadMeetings);
+  const wireSidecarEvents = useMeetingStore((s) => s.wireSidecarEvents);
 
   useEffect(() => {
     let cancelled = false;
+    let unwire: (() => void) | null = null;
     (async () => {
       try {
         const ping = await call<{ ok: boolean; version: string }>("ping");
         if (cancelled) return;
         setBoot({ status: "ok", version: ping.version });
+        unwire = await wireSidecarEvents();
         await Promise.all([loadConfig(), loadMeetings()]);
       } catch (e) {
         if (!cancelled) {
@@ -45,8 +48,9 @@ export default function App() {
     })();
     return () => {
       cancelled = true;
+      if (unwire) unwire();
     };
-  }, [loadConfig, loadMeetings]);
+  }, [loadConfig, loadMeetings, wireSidecarEvents]);
 
   if (boot.status === "error") {
     return <SidecarErrorBanner message={boot.message} />;

@@ -12,9 +12,11 @@ from pathlib import Path
 
 import httpx
 
+import threading
+
 from core.llm import cleanup_turn
 from sidecar import meeting_store
-from sidecar.rpc import APP_NOT_FOUND, RpcError, method
+from sidecar.rpc import APP_NOT_FOUND, RpcError, emit_event, method
 
 
 # --- Meta / config ---------------------------------------------------------
@@ -113,12 +115,50 @@ def speaker_merge(meeting_id: str, source_id: str, target_id: str) -> dict:
 
 
 @method("meeting.import_file")
-def meeting_import_file(path: str, title: str | None = None) -> dict:
-    """Phase 1 target. Stub raises until the pipeline lands."""
-    raise RpcError(
-        -32003,
-        "meeting.import_file not implemented yet — pending heavy deps (torch+pyannote)",
-    )
+def meeting_import_file(
+    path: str,
+    title: str | None = None,
+    language: str = "de",
+    whisper_model: str | None = None,
+    min_speakers: int | None = None,
+    max_speakers: int | None = None,
+) -> dict:
+    """Kick off the import pipeline. Returns the ``meeting_id`` immediately;
+    heavy stages (decode → transcribe → diarize → merge → persist) run in a
+    background thread and push ``meeting.progress`` / ``meeting.done`` /
+    ``meeting.error`` events to the UI."""
+    # Lazy import so the sidecar starts cleanly even if torch/pyannote
+    # aren't installed yet — only the actual import call will fail.
+    from sidecar.meeting_pipeline import create_meeting_shell, run_stages
+
+    try:
+        meeting_id, resolved_model = create_meeting_shell(
+            path, title=title, language=language, whisper_model=whisper_model,
+        )
+    except FileNotFoundError as e:
+        raise RpcError(APP_NOT_FOUND, str(e)) from e
+    except Exception as e:
+        raise RpcError(-32001, f"Import konnte nicht gestartet werden: {e}") from e
+
+    def _worker() -> None:
+        try:
+            run_stages(
+                meeting_id,
+                path,
+                language=language,
+                whisper_model=resolved_model,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+                on_event=emit_event,
+            )
+        except Exception:
+            # run_stages already emitted meeting.error + set status="error".
+            # Swallow here so the thread doesn't trip the Python-wide
+            # unhandled-exception hook.
+            pass
+
+    threading.Thread(target=_worker, name=f"import-{meeting_id[:8]}", daemon=True).start()
+    return {"meeting_id": meeting_id}
 
 
 @method("cleanup.run")
