@@ -157,10 +157,7 @@ def run_stages(
         folder = meeting_store.meeting_folder(meeting_id)
         source_copy = folder / f"source{src.suffix.lower()}"
         shutil.copy2(src, source_copy)
-        meeting_store._connect().execute(  # small private helper — avoid one-off public setter
-            "UPDATE meetings SET audio_path = ? WHERE id = ?",
-            (str(source_copy), meeting_id),
-        )
+        meeting_store.set_audio_path(meeting_id, str(source_copy))
         _emit(on_event, meeting_id, "decode", 1.0, eta_sec=time.time() - t0)
 
         # -- Stage: transcribe ---------------------------------------------
@@ -175,10 +172,7 @@ def run_stages(
         )
         if info.get("language") and info.get("language") != language:
             # Auto-detect result differs — store what Whisper actually found.
-            meeting_store._connect().execute(
-                "UPDATE meetings SET language = ? WHERE id = ?",
-                (info["language"], meeting_id),
-            )
+            meeting_store.set_language(meeting_id, info["language"])
 
         _emit(on_event, meeting_id, "transcribe", 1.0, eta_sec=time.time() - ts_start)
 

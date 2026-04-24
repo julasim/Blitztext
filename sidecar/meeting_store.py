@@ -230,6 +230,22 @@ def set_duration(meeting_id: str, duration_ms: int) -> None:
     )
 
 
+def set_audio_path(meeting_id: str, audio_path: str) -> None:
+    conn = _connect()
+    conn.execute(
+        "UPDATE meetings SET audio_path = ? WHERE id = ?",
+        (audio_path, meeting_id),
+    )
+
+
+def set_language(meeting_id: str, language: str) -> None:
+    conn = _connect()
+    conn.execute(
+        "UPDATE meetings SET language = ? WHERE id = ?",
+        (language, meeting_id),
+    )
+
+
 def list_meetings(limit: int = 100, offset: int = 0) -> list[dict]:
     """Newest first. Returns MeetingListItem dicts (no speakers/turns)."""
     conn = _connect()
