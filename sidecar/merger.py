@@ -227,29 +227,55 @@ def merge(
 # --- Einzelschritte --------------------------------------------------------
 
 
-def _build_single_speaker(ws: list[Word]) -> tuple[list[Turn], list[SpeakerStats]]:
-    """Fallback, wenn keine Diarization-Segments vorhanden sind."""
+def _build_single_speaker(
+    ws: list[Word], pause_split_ms: int = 2000
+) -> tuple[list[Turn], list[SpeakerStats]]:
+    """Fallback wenn keine Diarization-Segments vorhanden sind.
+
+    Statt eines einzigen riesigen Turns splitten wir an Pausen
+    > ``pause_split_ms`` (default 2 s) — das erzeugt natürliche Absätze
+    in der UI, auch wenn alle einem ``Speaker 1`` zugeordnet sind.
+    """
     if not ws:
         return [], []
-    text = " ".join(w.text.strip() for w in ws if w.text.strip())
-    turn = Turn(
-        idx=0,
-        speaker_label="Speaker 1",
-        start_ms=ws[0].t0_ms,
-        end_ms=ws[-1].t1_ms,
-        text_raw=text,
-        words=[{"t0": w.t0_ms, "t1": w.t1_ms, "w": w.text} for w in ws],
-        overlap_flag=False,
-    )
-    total_ms = max(1, turn.end_ms - turn.start_ms)
+
+    # Wörter in Pseudo-Turns gruppieren (Pause > pause_split_ms = neuer Turn).
+    groups: list[list[Word]] = [[ws[0]]]
+    for w in ws[1:]:
+        gap = w.t0_ms - groups[-1][-1].t1_ms
+        if gap > pause_split_ms:
+            groups.append([w])
+        else:
+            groups[-1].append(w)
+
+    turns: list[Turn] = []
+    total_word_count = 0
+    total_ms = 0
+    for i, g in enumerate(groups):
+        text = " ".join(w.text.strip() for w in g if w.text.strip())
+        if not text:
+            continue
+        turn = Turn(
+            idx=i,
+            speaker_label="Speaker 1",
+            start_ms=g[0].t0_ms,
+            end_ms=g[-1].t1_ms,
+            text_raw=text,
+            words=[{"t0": w.t0_ms, "t1": w.t1_ms, "w": w.text} for w in g],
+            overlap_flag=False,
+        )
+        turns.append(turn)
+        total_word_count += len(g)
+        total_ms += max(0, turn.end_ms - turn.start_ms)
+
     speaker = SpeakerStats(
         label="Speaker 1",
         color=palette_color(0),
-        word_count=len(ws),
+        word_count=total_word_count,
         duration_ms=total_ms,
         share_pct=100.0,
     )
-    return [turn], [speaker]
+    return turns, [speaker]
 
 
 def _build_label_map(pyannote_speakers: Iterable[str]) -> dict[str, str]:

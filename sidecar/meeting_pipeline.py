@@ -177,17 +177,36 @@ def run_stages(
         _emit(on_event, meeting_id, "transcribe", 1.0, eta_sec=time.time() - ts_start)
 
         # -- Stage: diarize -------------------------------------------------
+        # Best-effort: if pyannote can't load (missing HF token, missing
+        # license acceptance, no CUDA fallback path …) we proceed with an
+        # empty segment list. The merger then produces a single "Speaker 1"
+        # turn list, splitting on long pauses for readability. The user
+        # gets a usable transcript instead of a hard import failure.
         _emit(on_event, meeting_id, "diarize", 0.0)
         diar_start = time.time()
-        pipeline = DiarizationPipeline.instance()
-        segments = pipeline.diarize(
-            audio,
-            min_speakers=min_speakers,
-            max_speakers=max_speakers,
-            on_progress=lambda p: _emit(
-                on_event, meeting_id, "diarize", p
-            ),
-        )
+        segments: list[dict] = []
+        try:
+            pipeline = DiarizationPipeline.instance()
+            segments = pipeline.diarize(
+                audio,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+                on_progress=lambda p: _emit(
+                    on_event, meeting_id, "diarize", p
+                ),
+            )
+        except RuntimeError as e:
+            # Surface as a non-fatal warning so the UI can show a banner.
+            if on_event is not None:
+                on_event(
+                    "meeting.warning",
+                    {
+                        "meeting_id": meeting_id,
+                        "stage": "diarize",
+                        "message": str(e),
+                        "fallback": "single_speaker",
+                    },
+                )
         _emit(on_event, meeting_id, "diarize", 1.0, eta_sec=time.time() - diar_start)
 
         # -- Stage: merge ---------------------------------------------------
