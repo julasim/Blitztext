@@ -35,7 +35,20 @@ def _setup_logging() -> Path:
     return log_path
 
 
+def _force_utf8_stdio() -> None:
+    """The Tauri-side reader thread is strict UTF-8. Windows Python defaults
+    to cp1252 on stdout/stderr unless the parent sets PYTHONIOENCODING. Be
+    defensive — if any code path emits an umlaut or em-dash we don't want
+    the bridge to die. Python 3.7+ supports reconfigure()."""
+    for stream in (sys.stdout, sys.stderr, sys.stdin):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except (AttributeError, OSError):
+            pass
+
+
 def main() -> int:
+    _force_utf8_stdio()
     log_path = _setup_logging()
     log = logging.getLogger("sidecar")
     log.info("Blitztext sidecar v%s starting (log: %s)", rpc.__version__, log_path)

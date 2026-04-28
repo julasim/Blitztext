@@ -91,6 +91,10 @@ impl SidecarHandle {
         let mut cmd = Command::new(&python_exe);
         cmd.args(["-m", "sidecar"])
             .current_dir(&project_root)
+            // Force UTF-8 stdio so umlauts/em-dashes don't kill the
+            // line reader thread on Windows (Python defaults to cp1252).
+            .env("PYTHONIOENCODING", "utf-8")
+            .env("PYTHONUTF8", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
