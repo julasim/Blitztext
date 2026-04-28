@@ -23,6 +23,12 @@ librosa>=0.10.2   # only used for resampling; avoid its audioread fallback
 pyannote.audio>=3.3.0,<3.4.0
 torch>=2.4.0,<2.5.0
 torchaudio>=2.4.0,<2.5.0
+# Pinned deps below: pyannote 3.3.x has runtime conflicts with newer
+# huggingface_hub (1.x dropped use_auth_token kwarg) and newer
+# speechbrain (1.1+ has a lazy k2_fsa import that pyannote tickles).
+huggingface_hub>=0.25,<0.30
+speechbrain>=1.0,<1.1
+matplotlib>=3.7
 
 # --- Packaging (dev-only) ---
 pyinstaller>=6.6.0
