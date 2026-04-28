@@ -34,10 +34,20 @@ SAMPLE_RATE = 16_000
 
 
 def _get_hf_token() -> str | None:
-    """Try keyring first, then env. Returns ``None`` if neither is set."""
+    """Try keyring first, then env. Returns ``None`` if neither is set.
+
+    Service name matches the legacy Blitztext (capital B) so we share the
+    Windows Credential Manager namespace with the existing app — one
+    place for all Blitztext secrets.
+    """
     try:
         import keyring
 
+        # Primary: legacy-compatible service name.
+        tok = keyring.get_password("Blitztext", "hf_token")
+        if tok:
+            return tok
+        # Tolerate older code paths that wrote lowercase.
         tok = keyring.get_password("blitztext", "hf_token")
         if tok:
             return tok
@@ -86,11 +96,30 @@ class DiarizationPipeline:
                 "pip install 'pyannote.audio==3.3.*'"
             ) from e
 
+        # Newer huggingface_hub releases dropped the 'use_auth_token' kwarg
+        # but pyannote 3.3.x still tries to pass it through. Easiest robust
+        # fix: set the env var that hf_hub_download honours automatically.
+        os.environ.setdefault("HUGGINGFACE_HUB_TOKEN", token)
+        os.environ.setdefault("HF_TOKEN", token)
+
         try:
             import torch  # type: ignore
 
-            pipeline = Pipeline.from_pretrained(DIAR_MODEL, use_auth_token=token)
-            if torch.cuda.is_available():
+            try:
+                pipeline = Pipeline.from_pretrained(DIAR_MODEL, use_auth_token=token)
+            except TypeError:
+                # pyannote tries to forward use_auth_token to a function
+                # that no longer accepts it — call without and rely on env.
+                pipeline = Pipeline.from_pretrained(DIAR_MODEL)
+
+            # Decide device. Default: CUDA when available, but allow an
+            # opt-out via BLITZTEXT_DIAR_CPU=1 because torch+cu121's bundled
+            # cuDNN on Windows has a missing symbol (cudnnGetLibConfig)
+            # that crashes pyannote inference unrecoverably (the error is
+            # logged from native code and kills the process before Python
+            # can catch it). CPU is slower but reliable. Whisper keeps GPU.
+            force_cpu = os.environ.get("BLITZTEXT_DIAR_CPU", "1") == "1"
+            if torch.cuda.is_available() and not force_cpu:
                 pipeline.to(torch.device("cuda"))
                 self._device = "cuda"
             else:
@@ -139,8 +168,11 @@ class DiarizationPipeline:
         # pyannote wants torch tensor of shape (channels, samples). 16k mono.
         import torch  # type: ignore
 
-        tensor = torch.from_numpy(audio).unsqueeze(0).to(self._device)
-        audio_input = {"waveform": tensor, "sample_rate": SAMPLE_RATE}
+        tensor = torch.from_numpy(audio).unsqueeze(0)
+        audio_input_cuda = {
+            "waveform": tensor.to(self._device),
+            "sample_rate": SAMPLE_RATE,
+        }
 
         if on_progress:
             on_progress(0.02)
@@ -151,7 +183,32 @@ class DiarizationPipeline:
         if max_speakers is not None:
             kw["max_speakers"] = int(max_speakers)
 
-        annotation = self._pipeline(audio_input, **kw)
+        try:
+            annotation = self._pipeline(audio_input_cuda, **kw)
+        except (RuntimeError, OSError) as e:
+            # CUDA/cuDNN mismatches on Windows commonly fail with messages
+            # like "Could not load symbol cudnnGetLibConfig". Fall back to
+            # CPU automatically — slower but always works. Whisper keeps its
+            # GPU acceleration; only diarization is downgraded.
+            msg = str(e).lower()
+            cuda_hint = any(
+                k in msg for k in ("cudnn", "cuda", "cublas", "cusparse", "could not load symbol")
+            )
+            if not cuda_hint or self._device == "cpu":
+                raise
+            try:
+                from core.log import log
+
+                log(f"Diarization CUDA failed ({e}); retrying on CPU.")
+            except Exception:
+                pass
+            self._pipeline.to(torch.device("cpu"))
+            self._device = "cpu"
+            audio_input_cpu = {
+                "waveform": tensor.to("cpu"),
+                "sample_rate": SAMPLE_RATE,
+            }
+            annotation = self._pipeline(audio_input_cpu, **kw)
 
         if on_progress:
             on_progress(1.0)
