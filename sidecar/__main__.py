@@ -47,34 +47,33 @@ def _force_utf8_stdio() -> None:
             pass
 
 
-def _preload_diarization_async() -> None:
-    """Eager-load pyannote on a dedicated background thread so the heavy
-    one-time init (~22 s on first GPU spawn) is overlapped with the user
-    seeing the UI come up. Lazy-loading inside the import worker thread
-    has been observed to hang on Windows — we pre-warm here on a stable
-    thread that lives for the process lifetime.
+def _preload_heavy_imports_synchronously() -> None:
+    """Import all the heavy ML libs on the MAIN thread, BEFORE we start
+    serving RPCs. This blocks startup by ~10–25 s on first launch but is
+    the only reliable way to avoid Python import deadlocks: scipy + torch
+    + pyannote pull in C extensions that do not survive concurrent
+    cross-thread imports on Windows. We saw the preload-on-thread
+    approach deadlock in scipy.signal load.
 
-    Failures here are NON-fatal — sidecar starts even if HF token is
-    missing. The actual diarize call then surfaces the issue with the
-    user-friendly RuntimeError from DiarizationPipeline.
+    All exceptions are caught and logged — sidecar must still start so
+    the UI can surface the problem (and lighter RPCs like ping still work).
     """
-    import threading
+    log = logging.getLogger("sidecar.preload")
+    try:
+        log.info("eager-importing torch...")
+        import torch  # noqa: F401
+        log.info("eager-importing faster_whisper.audio...")
+        from faster_whisper.audio import decode_audio  # noqa: F401
+        log.info("eager-importing pyannote pipeline...")
+        from sidecar.diarization import DiarizationPipeline
 
-    def _worker() -> None:
-        log = logging.getLogger("sidecar.preload")
-        try:
-            from sidecar.diarization import DiarizationPipeline
-
-            log.info("preloading diarization pipeline...")
-            DiarizationPipeline.instance().ensure_loaded()
-            log.info("diarization pipeline ready (device=%s)",
-                     DiarizationPipeline.instance().device)
-        except Exception as e:  # noqa: BLE001 — must never crash startup
-            log.warning("diarization preload failed: %s", e)
-
-    threading.Thread(
-        target=_worker, name="pyannote-preload", daemon=True
-    ).start()
+        DiarizationPipeline.instance().ensure_loaded()
+        log.info(
+            "preload complete (device=%s)",
+            DiarizationPipeline.instance().device,
+        )
+    except Exception as e:  # noqa: BLE001 — never crash startup
+        log.warning("preload failed (non-fatal): %s", e)
 
 
 def main() -> int:
@@ -83,7 +82,8 @@ def main() -> int:
     log = logging.getLogger("sidecar")
     log.info("Blitztext sidecar v%s starting (log: %s)", rpc.__version__, log_path)
 
-    _preload_diarization_async()
+    _preload_heavy_imports_synchronously()
+    log.info("preload phase done; entering serve_stdio loop")
 
     try:
         rpc.serve_stdio()
