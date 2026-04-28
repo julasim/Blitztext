@@ -4,11 +4,16 @@
 // "not yet wired" state on submission.
 
 import { Upload, FileAudio, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { call } from "../lib/rpc";
 import { useMeetingStore } from "../state/useMeetingStore";
 
 const ACCEPTED = [".wav", ".mp3", ".m4a", ".flac", ".ogg", ".mp4"];
+
+function isAcceptedAudio(path: string): boolean {
+  const lower = path.toLowerCase();
+  return ACCEPTED.some((ext) => lower.endsWith(ext));
+}
 
 export function MeetingImport() {
   const goLibrary = useMeetingStore((s) => s.goLibrary);
@@ -20,23 +25,62 @@ export function MeetingImport() {
   const [state, setState] = useState<"idle" | "submitting" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
 
-  const pick = async () => {
-    const { open } = await import("@tauri-apps/plugin-dialog");
-    const selected = await open({
-      multiple: false,
-      filters: [
-        {
-          name: "Audio",
-          extensions: ACCEPTED.map((e) => e.slice(1)),
-        },
-      ],
-    });
-    if (typeof selected === "string") {
-      setPath(selected);
-      if (!title) {
-        const base = selected.split(/[\\/]/).pop() || "";
-        setTitle(base.replace(/\.[^.]+$/, ""));
+  // Wire Tauri 2's native drag-drop event. The HTML5 dataTransfer API
+  // does not expose actual file paths inside Tauri's webview (security),
+  // so we have to listen to tauri://drag-drop on the window.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+        const wv = getCurrentWebview();
+        unlisten = await wv.onDragDropEvent((evt) => {
+          // event payload is { type: "enter" | "over" | "leave" | "drop", paths?: string[] }
+          if (evt.payload.type === "enter" || evt.payload.type === "over") {
+            setHover(true);
+          } else if (evt.payload.type === "leave") {
+            setHover(false);
+          } else if (evt.payload.type === "drop") {
+            setHover(false);
+            const paths = evt.payload.paths;
+            const first = paths.find(isAcceptedAudio);
+            if (first) {
+              setPath(first);
+              const base = first.split(/[\\/]/).pop() || "";
+              setTitle((t) => t || base.replace(/\.[^.]+$/, ""));
+            }
+          }
+        });
+      } catch (e) {
+        console.warn("drag-drop wiring failed:", e);
       }
+    })();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  const pick = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        multiple: false,
+        filters: [
+          {
+            name: "Audio",
+            extensions: ACCEPTED.map((e) => e.slice(1)),
+          },
+        ],
+      });
+      if (typeof selected === "string") {
+        setPath(selected);
+        if (!title) {
+          const base = selected.split(/[\\/]/).pop() || "";
+          setTitle(base.replace(/\.[^.]+$/, ""));
+        }
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -212,11 +256,9 @@ export function MeetingImport() {
 
 function Dropzone({
   hover,
-  setHover,
   path,
   onClear,
   onPick,
-  onFile,
 }: {
   hover: boolean;
   setHover: (v: boolean) => void;
@@ -225,25 +267,12 @@ function Dropzone({
   onPick: () => void;
   onFile: (p: string) => void;
 }) {
+  // No HTML5 drop handler — Tauri 2's webview doesn't expose file paths
+  // through dataTransfer. The actual drop is handled by the page-level
+  // tauri://drag-drop subscription in MeetingImport.
   return (
     <div
-      onDragOver={(e) => {
-        e.preventDefault();
-        setHover(true);
-      }}
-      onDragLeave={() => setHover(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setHover(false);
-        // In Tauri drag-drop events for files come via the window-level
-        // `tauri://drag-drop` event, but a browser-side path is not
-        // always exposed. For MVP we simply prompt the user to use the
-        // picker when a drop can't be resolved.
-        const first = e.dataTransfer.files[0];
-        if (first && "path" in first && (first as any).path) {
-          onFile((first as any).path);
-        }
-      }}
+      onDragOver={(e) => e.preventDefault()}
       style={{
         padding: 40,
         borderRadius: "var(--radius-2xl)",
