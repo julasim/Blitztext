@@ -346,3 +346,109 @@ def export_markdown(meeting_id: str, path: str, use_cleanup: bool = False) -> di
     data = md.encode("utf-8")
     out.write_bytes(data)
     return {"ok": True, "bytes": len(data), "path": str(out.resolve())}
+
+
+# --- Settings (HF token, model defaults) -----------------------------------
+
+
+@method("settings.get")
+def settings_get() -> dict:
+    """User-editable settings + derived hints for the UI.
+
+    Token presence is reported as a boolean + last-4 character hint so
+    the UI can show 'hf_…GkcW' without exposing the secret.
+    """
+    import keyring
+
+    try:
+        tok = keyring.get_password("Blitztext", "hf_token") or ""
+    except Exception:
+        tok = ""
+
+    last4 = tok[-4:] if tok else ""
+    return {
+        "hf_token_present": bool(tok),
+        "hf_token_hint": f"hf_…{last4}" if tok else "",
+        "whisper_default": "large-v3-turbo",
+        "ollama_default": "qwen2.5:7b-instruct",
+    }
+
+
+@method("settings.set_hf_token")
+def settings_set_hf_token(token: str) -> dict:
+    """Persist (or delete) the HuggingFace token in Windows Credential Manager."""
+    import keyring
+
+    token = (token or "").strip()
+    if token:
+        if not token.startswith("hf_") or len(token) < 20:
+            raise RpcError(
+                -32602,
+                "Token sieht ungültig aus — sollte mit 'hf_' beginnen.",
+            )
+        keyring.set_password("Blitztext", "hf_token", token)
+        return {"ok": True, "stored": True}
+
+    # Empty string: delete the credential.
+    try:
+        keyring.delete_password("Blitztext", "hf_token")
+    except Exception:
+        pass  # already absent
+    return {"ok": True, "stored": False}
+
+
+@method("settings.test_hf_token")
+def settings_test_hf_token() -> dict:
+    """Probe HF with the stored token: auth + gated-repo access.
+
+    The UI uses this to render a green/yellow/red status; without it the
+    only feedback is a failed import 30 minutes in.
+    """
+    import keyring
+
+    try:
+        tok = keyring.get_password("Blitztext", "hf_token") or ""
+    except Exception as e:
+        raise RpcError(-32000, f"Keyring nicht erreichbar: {e}") from e
+
+    if not tok:
+        return {"ok": False, "stage": "missing", "message": "Kein Token gespeichert."}
+
+    try:
+        from huggingface_hub import HfApi, hf_hub_download  # type: ignore
+    except ImportError:
+        return {"ok": False, "stage": "deps", "message": "huggingface_hub fehlt."}
+
+    api = HfApi()
+    try:
+        who = api.whoami(token=tok)
+        user_name = who.get("name") if isinstance(who, dict) else str(who)
+    except Exception as e:
+        return {"ok": False, "stage": "auth", "message": f"Token ungültig: {e}"}
+
+    # Gated-repo probe: try to fetch a small file from a known gated model.
+    try:
+        hf_hub_download(
+            repo_id="pyannote/speaker-diarization-3.1",
+            filename="config.yaml",
+            token=tok,
+        )
+    except Exception as e:
+        return {
+            "ok": False,
+            "stage": "gated",
+            "user": user_name,
+            "message": (
+                "Token authentifiziert, aber keine Gated-Repo-Zugriffsrechte. "
+                "Token unter huggingface.co/settings/tokens bearbeiten und "
+                "'Read access to contents of all public gated repos you can "
+                f"access' aktivieren. Detail: {e}"
+            ),
+        }
+
+    return {
+        "ok": True,
+        "stage": "ready",
+        "user": user_name,
+        "message": f"Eingeloggt als {user_name}, Gated-Zugriff bestätigt.",
+    }
