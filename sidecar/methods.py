@@ -348,6 +348,50 @@ def export_markdown(meeting_id: str, path: str, use_cleanup: bool = False) -> di
     return {"ok": True, "bytes": len(data), "path": str(out.resolve())}
 
 
+# --- Live Recording (Mic-capture for the meeting pipeline) -----------------
+
+
+@method("recording.start")
+def recording_start(
+    title: str | None = None,
+    language: str = "de",
+    whisper_model: str | None = None,
+) -> dict:
+    """Begin mic capture. Returns a meeting_id immediately; the actual
+    transcription only kicks off once the user calls recording.stop."""
+    from sidecar.recording import RecordingSession
+
+    return RecordingSession.instance().start(
+        title=title, language=language, whisper_model=whisper_model
+    )
+
+
+@method("recording.stop")
+def recording_stop() -> dict:
+    """Stop mic capture, save WAV, hand off to the offline pipeline.
+    The follow-up meeting.progress / meeting.done events will arrive
+    against the same meeting_id."""
+    from sidecar.recording import RecordingSession
+
+    return RecordingSession.instance().stop()
+
+
+@method("recording.cancel")
+def recording_cancel() -> dict:
+    """Abort the current mic capture and delete the in-progress meeting."""
+    from sidecar.recording import RecordingSession
+
+    return RecordingSession.instance().cancel()
+
+
+@method("recording.state")
+def recording_state() -> dict:
+    """Probe current recording state — useful for the UI on reconnect."""
+    from sidecar.recording import RecordingSession
+
+    return RecordingSession.instance().state()
+
+
 # --- Settings (HF token, model defaults) -----------------------------------
 
 

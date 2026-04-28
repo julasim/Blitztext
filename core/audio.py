@@ -23,18 +23,24 @@ class AudioRecorder:
     SAMPLE_RATE = 16000  # Whisper expects 16kHz
     CHANNELS = 1
     DTYPE = "float32"
-    # Primary cap = 10 min; add a small safety margin so the UI-side timer
-    # has room to trigger the clean stop first.
+    # Default cap = 10 min + safety margin (legacy dictation). Meeting-mode
+    # passes ``max_buffer_sec`` for hours-long sessions.
     MAX_BUFFER_SEC = 11 * 60
     MAX_BUFFER_SAMPLES = MAX_BUFFER_SEC * SAMPLE_RATE
 
-    def __init__(self):
+    def __init__(self, max_buffer_sec: int | None = None):
         self._buffer: list[np.ndarray] = []
         self._buffer_samples: int = 0
         self._stream: sd.InputStream | None = None
         self._lock = threading.Lock()
         self._recording = False
         self._cap_warned = False
+        # Per-instance override (e.g. meeting-mode 2 h, dictation 11 min).
+        self._max_samples = (
+            int(max_buffer_sec) * self.SAMPLE_RATE
+            if max_buffer_sec is not None
+            else self.MAX_BUFFER_SAMPLES
+        )
 
     @property
     def is_recording(self) -> bool:
@@ -83,10 +89,11 @@ class AudioRecorder:
                 return
             # Hard-cap: silently drop frames once the buffer reaches the
             # safety limit. Log a single warning so a post-mortem shows it.
-            if self._buffer_samples + frames > self.MAX_BUFFER_SAMPLES:
+            if self._buffer_samples + frames > self._max_samples:
                 if not self._cap_warned:
+                    cap_min = self._max_samples // self.SAMPLE_RATE // 60
                     log(
-                        f"AudioRecorder: buffer reached {self.MAX_BUFFER_SEC}s cap — "
+                        f"AudioRecorder: buffer reached {cap_min} min cap — "
                         f"dropping further frames. UI-side auto-stop should have fired already."
                     )
                     self._cap_warned = True

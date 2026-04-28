@@ -67,19 +67,21 @@ pub fn run() {
 }
 
 // --- Global shortcuts ------------------------------------------------------
+//
+// Shortcut::new is not a const fn, so we build the values on demand and
+// match incoming presses against the same constructor calls.
 
-/// Toggle-recording shortcut. The frontend listens for `bt://shortcut`
-/// events and decides what to do based on the meaning string.
-const TOGGLE_RECORDING_SHORTCUT: Shortcut =
-    Shortcut::new(Some(Modifiers::CONTROL.union(Modifiers::SHIFT)), Code::Space);
+fn toggle_recording_shortcut() -> Shortcut {
+    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space)
+}
 
-/// Show the main window (Bibliothek) from anywhere in the OS.
-const SHOW_LIBRARY_SHORTCUT: Shortcut =
-    Shortcut::new(Some(Modifiers::CONTROL), Code::KeyO);
+fn show_library_shortcut() -> Shortcut {
+    Shortcut::new(Some(Modifiers::CONTROL), Code::KeyO)
+}
 
 fn register_global_shortcuts<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let manager = app.global_shortcut();
-    for sc in [TOGGLE_RECORDING_SHORTCUT, SHOW_LIBRARY_SHORTCUT] {
+    for sc in [toggle_recording_shortcut(), show_library_shortcut()] {
         if let Err(e) = manager.register(sc) {
             log::warn!("failed to register shortcut {sc:?}: {e}");
         }
@@ -87,11 +89,11 @@ fn register_global_shortcuts<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 }
 
 fn handle_global_shortcut<R: tauri::Runtime>(app: &tauri::AppHandle<R>, sc: &Shortcut) {
-    if *sc == SHOW_LIBRARY_SHORTCUT {
+    if *sc == show_library_shortcut() {
         bring_main_to_front(app);
         return;
     }
-    if *sc == TOGGLE_RECORDING_SHORTCUT {
+    if *sc == toggle_recording_shortcut() {
         // For now: surface the press to the frontend. Phase-2 step 2 will
         // wire the actual recording toggle (Mini-Widget + sidecar capture).
         bring_main_to_front(app);
