@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
+import { Titlebar } from "./components/Titlebar";
 import { call } from "./lib/rpc";
 import { useMeetingStore } from "./state/useMeetingStore";
 import { Library } from "./views/Library";
@@ -52,12 +53,34 @@ export default function App() {
     };
   }, [loadConfig, loadMeetings, wireSidecarEvents]);
 
+  // Subscribe to global-shortcut events emitted by Rust (Ctrl+Shift+Space etc.)
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen<{ action: string }>("bt://shortcut", (evt) => {
+        // For now: just log. Phase-2 step 2 wires the toggle to recording.
+        console.info("[bt://shortcut]", evt.payload);
+      });
+    })();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   if (boot.status === "error") {
-    return <SidecarErrorBanner message={boot.message} />;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+        <Titlebar />
+        <SidecarErrorBanner message={boot.message} />
+      </div>
+    );
   }
 
   return (
-    <div style={{ display: "flex", height: "100%" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <Titlebar />
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <Sidebar />
       <div
         style={{
@@ -80,6 +103,7 @@ export default function App() {
           <Settings />
         ) : null}
         {boot.status === "ok" && <StatusBar version={boot.version} />}
+      </div>
       </div>
     </div>
   );
