@@ -110,10 +110,22 @@ _conn: sqlite3.Connection | None = None
 
 
 def _connect() -> sqlite3.Connection:
+    """Lazily-opened singleton connection.
+
+    ``check_same_thread=False`` is required because the RPC layer dispatches
+    requests on the main thread but spawns worker threads (e.g. the import
+    pipeline) that hit the DB on hand-offs. SQLite serializes per-connection
+    operations internally, and we never share a transaction across threads,
+    so cross-thread access is safe in our usage.
+    """
     global _conn
     if _conn is not None:
         return _conn
-    conn = sqlite3.connect(str(db_path()), isolation_level=None)  # autocommit off via explicit BEGIN
+    conn = sqlite3.connect(
+        str(db_path()),
+        isolation_level=None,  # autocommit off via explicit BEGIN
+        check_same_thread=False,
+    )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION};")

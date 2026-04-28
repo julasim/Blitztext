@@ -127,6 +127,11 @@ def meeting_import_file(
     heavy stages (decode → transcribe → diarize → merge → persist) run in a
     background thread and push ``meeting.progress`` / ``meeting.done`` /
     ``meeting.error`` events to the UI."""
+    import logging
+
+    log = logging.getLogger("sidecar.import")
+    log.info("meeting.import_file received: path=%r title=%r model=%r", path, title, whisper_model)
+
     # Lazy import so the sidecar starts cleanly even if torch/pyannote
     # aren't installed yet — only the actual import call will fail.
     from sidecar.meeting_pipeline import create_meeting_shell, run_stages
@@ -136,11 +141,16 @@ def meeting_import_file(
             path, title=title, language=language, whisper_model=whisper_model,
         )
     except FileNotFoundError as e:
+        log.warning("meeting.import_file FileNotFoundError: %s", e)
         raise RpcError(APP_NOT_FOUND, str(e)) from e
     except Exception as e:
+        log.exception("meeting.import_file create_meeting_shell failed")
         raise RpcError(-32001, f"Import konnte nicht gestartet werden: {e}") from e
 
+    log.info("meeting %s shell created (model=%s); starting worker thread", meeting_id, resolved_model)
+
     def _worker() -> None:
+        log.info("worker[%s] started", meeting_id[:8])
         try:
             run_stages(
                 meeting_id,
@@ -151,11 +161,12 @@ def meeting_import_file(
                 max_speakers=max_speakers,
                 on_event=emit_event,
             )
+            log.info("worker[%s] finished cleanly", meeting_id[:8])
         except Exception:
             # run_stages already emitted meeting.error + set status="error".
-            # Swallow here so the thread doesn't trip the Python-wide
+            # Log + swallow so the thread doesn't trip the Python-wide
             # unhandled-exception hook.
-            pass
+            log.exception("worker[%s] failed", meeting_id[:8])
 
     threading.Thread(target=_worker, name=f"import-{meeting_id[:8]}", daemon=True).start()
     return {"meeting_id": meeting_id}
