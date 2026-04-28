@@ -75,11 +75,34 @@ def _emit(
 _transcriber_cache: dict[str, Transcriber] = {}
 
 
+def _pick_device_for_whisper() -> tuple[str, str]:
+    """Returns (device, compute_type) for faster-whisper.
+
+    Meeting-mode wants CUDA + float16 if available — orders of magnitude
+    faster than int8 on CPU for large-v3-turbo. Without GPU we fall back
+    to int8 on CPU (compatible with old i7s, no extra memory).
+    """
+    try:
+        import torch  # type: ignore
+
+        if torch.cuda.is_available():
+            return "cuda", "float16"
+    except Exception:
+        pass
+    return "cpu", "int8"
+
+
 def _get_transcriber(model: str, language: str) -> Transcriber:
-    key = f"{model}:{language}"
+    device, compute_type = _pick_device_for_whisper()
+    key = f"{model}:{language}:{device}"
     t = _transcriber_cache.get(key)
     if t is None:
-        t = Transcriber(model_size=model, language=language)
+        t = Transcriber(
+            model_size=model,
+            language=language,
+            device=device,
+            compute_type=compute_type,
+        )
         t.load()
         _transcriber_cache[key] = t
     return t

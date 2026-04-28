@@ -30,9 +30,18 @@ class Transcriber:
     """Wraps faster-whisper for local speech-to-text with a custom downloader
     that reports real progress."""
 
-    def __init__(self, model_size: str = "base", language: str = "de", models_dir: str | None = None):
+    def __init__(
+        self,
+        model_size: str = "base",
+        language: str = "de",
+        models_dir: str | None = None,
+        device: str = "cpu",
+        compute_type: str = "int8",
+    ):
         self._model_size = model_size
         self._language = language
+        self._device = device
+        self._compute_type = compute_type
         self._model: WhisperModel | None = None
 
         if models_dir is None:
@@ -71,11 +80,13 @@ class Transcriber:
         if not self._is_cached():
             self._download_model(repo_id, local_dir, on_progress)
 
-        # Load directly from the flat local dir — no symlinks involved
+        # Load directly from the flat local dir — no symlinks involved.
+        # Defaults to cpu/int8 (legacy dictation path); meeting-mode passes
+        # device="cuda", compute_type="float16" for ~10× faster transcription.
         self._model = WhisperModel(
             local_dir,
-            device="cpu",
-            compute_type="int8",
+            device=self._device,
+            compute_type=self._compute_type,
         )
 
     def _download_model(
