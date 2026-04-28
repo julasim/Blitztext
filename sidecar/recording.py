@@ -123,28 +123,28 @@ class RecordingSession:
         sample_rate = AudioRecorder.SAMPLE_RATE
         duration_ms = int(len(audio) * 1000 / sample_rate) if audio.size else 0
 
-        # Live mic input is often much quieter than file imports. Normalize
-        # the peak to 0.95 BEFORE saving so the downstream Whisper VAD has
-        # a healthy signal to work with — and write FLOAT WAV (no PCM_16
-        # quantization loss). Both are essential for transcription quality
-        # on built-in laptop mics that capture at low amplitude.
+        # Diagnostic logging — peak helps us see whether the mic is
+        # actually picking up speech-level audio. We DON'T normalize:
+        # peak-boost amplifies background noise just as much as speech, so
+        # on a quiet laptop mic in a noisy room it makes Whisper hallucinate.
+        # Writing FLOAT WAV preserves the original dynamic range, no
+        # quantization loss across the encode/decode round trip.
         try:
             import numpy as np
 
             if audio.size:
                 peak = float(np.abs(audio).max())
+                rms = float(np.sqrt(np.mean(audio.astype(np.float64) ** 2)))
                 _log.info(
-                    "recording[%s] %d samples (%.2fs), peak=%.4f, normalize=%s",
+                    "recording[%s] %d samples (%.2fs), peak=%.4f, rms=%.4f",
                     mid[:8],
                     audio.size,
                     duration_ms / 1000.0,
                     peak,
-                    "yes" if peak > 0 and peak < 0.9 else "no",
+                    rms,
                 )
-                if 0 < peak < 0.9:
-                    audio = audio * (0.95 / peak)
         except Exception:
-            _log.exception("audio normalization failed (proceeding without)")
+            _log.exception("audio diagnostic logging failed")
 
         # File IO outside the lock.
         folder = meeting_store.meeting_folder(mid)

@@ -109,12 +109,13 @@ def _get_transcriber(model: str, language: str) -> Transcriber:
 
 
 def _pick_default_whisper_model() -> str:
-    """``large-v3-turbo`` if CUDA, else ``medium``."""
+    """``large-v3`` if CUDA (~10% more accurate than turbo, especially on
+    short noisy clips with quiet speakers), ``medium`` else."""
     try:
         import torch  # type: ignore
 
         if torch.cuda.is_available():
-            return "large-v3-turbo"
+            return "large-v3"
     except Exception:
         pass
     return "medium"
