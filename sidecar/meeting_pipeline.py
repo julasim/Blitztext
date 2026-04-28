@@ -177,10 +177,17 @@ def run_stages(
         # Copy source next to the meeting folder for later replay / speaker
         # preview. We keep the original container, not the resampled WAV —
         # loses less info if the user ever re-exports.
+        # Skip when the audio is ALREADY in the meeting folder (live
+        # recording writes source.wav directly via recording.py).
         folder = meeting_store.meeting_folder(meeting_id)
         source_copy = folder / f"source{src.suffix.lower()}"
-        shutil.copy2(src, source_copy)
-        meeting_store.set_audio_path(meeting_id, str(source_copy))
+        try:
+            same = source_copy.resolve() == src.resolve()
+        except Exception:
+            same = False
+        if not same:
+            shutil.copy2(src, source_copy)
+            meeting_store.set_audio_path(meeting_id, str(source_copy))
         _emit(on_event, meeting_id, "decode", 1.0, eta_sec=time.time() - t0)
 
         # -- Stage: transcribe ---------------------------------------------
