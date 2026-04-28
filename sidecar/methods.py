@@ -174,45 +174,111 @@ def meeting_import_file(
 
 @method("cleanup.run")
 def cleanup_run(meeting_id: str, model: str | None = None) -> dict:
-    """Läuft den LLM-Cleanup über alle Turns eines Meetings.
+    """Startet den LLM-Cleanup über alle Turns eines Meetings.
 
-    Synchron in dieser Phase — ein 200-Turn-Meeting braucht ~3 Min.
-    Events für Streaming-Progress kommen mit der Pipeline (Phase 1 Ende).
-    Idempotent: bereits bereinigte Turns werden übersprungen.
+    Asynchron — RPC kehrt sofort zurück, Worker-Thread läuft die Turns
+    durch und emittiert ``cleanup.progress`` / ``cleanup.done`` /
+    ``cleanup.error`` Events. Idempotent: bereits bereinigte Turns
+    werden übersprungen.
 
-    Returns ``{ok, processed, skipped, total}``.
+    Returns ``{ok, started, total}``.
     """
+    import logging
+    log = logging.getLogger("sidecar.cleanup")
+
     meeting_store.init_db()
     m = meeting_store.get_meeting(meeting_id)
     if m is None:
         raise RpcError(APP_NOT_FOUND, f"meeting {meeting_id} not found")
 
-    turns = m["turns"]
-    total = len(turns)
-    processed = 0
-    skipped = 0
+    total = len(m["turns"])
+    log.info("cleanup.run start: meeting=%s turns=%d", meeting_id, total)
 
-    for i, t in enumerate(turns):
-        if t.get("text_clean"):
-            skipped += 1
-            continue
+    def _worker() -> None:
+        # Re-fetch turns inside the worker so we work with fresh state.
+        meeting_store.init_db()
+        m_fresh = meeting_store.get_meeting(meeting_id)
+        if m_fresh is None:
+            emit_event("cleanup.error", {"meeting_id": meeting_id, "message": "meeting disappeared"})
+            return
+        turns = m_fresh["turns"]
+        n = len(turns)
+        processed = 0
+        skipped = 0
 
-        prev_text = turns[i - 1].get("text_clean") or turns[i - 1]["text_raw"] if i > 0 else None
-        next_text = turns[i + 1]["text_raw"] if i + 1 < total else None
+        for i, t in enumerate(turns):
+            if t.get("text_clean"):
+                skipped += 1
+                emit_event(
+                    "cleanup.progress",
+                    {
+                        "meeting_id": meeting_id,
+                        "processed": processed,
+                        "skipped": skipped,
+                        "total": n,
+                        "turn_id": t["id"],
+                    },
+                )
+                continue
 
-        try:
-            cleaned = cleanup_turn(
-                t["text_raw"], prev_text=prev_text, next_text=next_text, model=model
+            prev_text = (
+                turns[i - 1].get("text_clean") or turns[i - 1]["text_raw"]
+                if i > 0 else None
             )
-        except Exception as e:
-            # Einzelner Turn-Fehler stoppt den Lauf nicht — restliche Turns
-            # sollen weiter versucht werden.
-            raise RpcError(-32005, f"cleanup failed on turn {t['idx']}: {e}") from e
+            next_text = turns[i + 1]["text_raw"] if i + 1 < n else None
 
-        meeting_store.set_turn_clean(t["id"], cleaned)
-        processed += 1
+            try:
+                cleaned = cleanup_turn(
+                    t["text_raw"],
+                    prev_text=prev_text,
+                    next_text=next_text,
+                    model=model,
+                )
+            except Exception as e:
+                log.warning("cleanup turn %s failed: %s", t["id"][:8], e)
+                emit_event(
+                    "cleanup.error",
+                    {
+                        "meeting_id": meeting_id,
+                        "turn_id": t["id"],
+                        "message": str(e),
+                    },
+                )
+                # Don't break — keep going on subsequent turns.
+                continue
 
-    return {"ok": True, "total": total, "processed": processed, "skipped": skipped}
+            meeting_store.set_turn_clean(t["id"], cleaned)
+            processed += 1
+            emit_event(
+                "cleanup.progress",
+                {
+                    "meeting_id": meeting_id,
+                    "processed": processed,
+                    "skipped": skipped,
+                    "total": n,
+                    "turn_id": t["id"],
+                },
+            )
+
+        log.info(
+            "cleanup.run done: meeting=%s processed=%d skipped=%d total=%d",
+            meeting_id, processed, skipped, n,
+        )
+        emit_event(
+            "cleanup.done",
+            {
+                "meeting_id": meeting_id,
+                "processed": processed,
+                "skipped": skipped,
+                "total": n,
+            },
+        )
+
+    threading.Thread(
+        target=_worker, name=f"cleanup-{meeting_id[:8]}", daemon=True
+    ).start()
+
+    return {"ok": True, "started": True, "total": total}
 
 
 # --- Export ----------------------------------------------------------------

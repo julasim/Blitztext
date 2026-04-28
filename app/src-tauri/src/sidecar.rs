@@ -177,7 +177,11 @@ impl SidecarHandle {
                 .map_err(|e| format!("sidecar stdin flush: {e}"))?;
         }
 
-        let received = tokio::time::timeout(Duration::from_secs(30), rx)
+        // 10 min generous timeout — a meeting cleanup over 200+ turns can
+        // legitimately run several minutes. The async-worker methods like
+        // meeting.import_file return their id in milliseconds anyway, so
+        // this only matters for the stuck-call edge case.
+        let received = tokio::time::timeout(Duration::from_secs(600), rx)
             .await
             .map_err(|_| {
                 // Clean up pending slot on timeout.

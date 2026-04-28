@@ -181,19 +181,19 @@ export const useMeetingStore = create<State>((set, get) => ({
   cleanupRunning: false,
   cleanupError: null,
   async runCleanup() {
+    // Async pattern: kick the sidecar off, the cleanup.* events take over
+    // from there. cleanupRunning stays true until the .done event fires.
     const active = get().active;
     if (!active) return;
     set({ cleanupRunning: true, cleanupError: null });
     try {
       await call("cleanup.run", { meeting_id: active.id });
-      await get().loadMeeting(active.id);
-      set({ useCleanup: true });
+      // Don't refresh here — wait for cleanup.done.
     } catch (e) {
       set({
+        cleanupRunning: false,
         cleanupError: e instanceof Error ? e.message : String(e),
       });
-    } finally {
-      set({ cleanupRunning: false });
     }
   },
 
@@ -242,10 +242,31 @@ export const useMeetingStore = create<State>((set, get) => ({
         void get().loadMeetings();
       },
     );
+    const offCleanupDone = await onEvent<{
+      meeting_id: string;
+      processed: number;
+      skipped: number;
+      total: number;
+    }>("cleanup.done", (p) => {
+      set({ cleanupRunning: false, useCleanup: true });
+      const active = get().active;
+      if (active?.id === p.meeting_id) void get().loadMeeting(p.meeting_id);
+    });
+    const offCleanupError = await onEvent<{
+      meeting_id: string;
+      message: string;
+    }>("cleanup.error", (p) => {
+      set({
+        cleanupRunning: false,
+        cleanupError: p.message,
+      });
+    });
     return () => {
       offProgress();
       offDone();
       offError();
+      offCleanupDone();
+      offCleanupError();
     };
   },
 }));
