@@ -26,7 +26,9 @@ body {
   font-size: var(--fs-base);
   line-height: 1.5;
   color: var(--bt-ink);
-  background: var(--bt-white);
+  /* No background here — transparent windows (mini-widget) need to see
+     through; opaque windows (main) paint their own background in App. */
+  background: transparent;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;

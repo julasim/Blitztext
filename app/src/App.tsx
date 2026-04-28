@@ -70,7 +70,14 @@ export default function App() {
 
   if (boot.status === "error") {
     return (
-      <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          background: "var(--bt-white)",
+        }}
+      >
         <Titlebar />
         <SidecarErrorBanner message={boot.message} />
       </div>
@@ -78,7 +85,14 @@ export default function App() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        background: "var(--bt-white)",
+      }}
+    >
       <Titlebar />
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <Sidebar />

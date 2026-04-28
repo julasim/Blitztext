@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "Permissions for the main Blitztext window: core, file dialogs, filesystem reads for drop targets, and shell for the sidecar.",
   "windows": [
-    "main"
+    "main",
+    "mini"
   ],
   "permissions": [
     "core:default",

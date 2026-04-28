@@ -94,15 +94,33 @@ fn handle_global_shortcut<R: tauri::Runtime>(app: &tauri::AppHandle<R>, sc: &Sho
         return;
     }
     if *sc == toggle_recording_shortcut() {
-        // For now: surface the press to the frontend. Phase-2 step 2 will
-        // wire the actual recording toggle (Mini-Widget + sidecar capture).
-        bring_main_to_front(app);
+        // Toggle the mini-widget window visibility. The widget owns the
+        // start/stop logic via recording.* RPCs; this just gives the user
+        // a fast way to summon (or dismiss) it from anywhere in the OS.
+        toggle_mini_widget(app);
         if let Err(e) = app.emit(
             "bt://shortcut",
             serde_json::json!({"action": "toggle_recording"}),
         ) {
             log::warn!("failed to emit shortcut event: {e}");
         }
+    }
+}
+
+fn toggle_mini_widget<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let Some(mini) = app.get_webview_window("mini") else {
+        log::warn!("mini window not found");
+        return;
+    };
+    match mini.is_visible() {
+        Ok(true) => {
+            let _ = mini.hide();
+        }
+        Ok(false) => {
+            let _ = mini.show();
+            let _ = mini.set_focus();
+        }
+        Err(e) => log::warn!("mini visibility check failed: {e}"),
     }
 }
 
