@@ -47,11 +47,43 @@ def _force_utf8_stdio() -> None:
             pass
 
 
+def _preload_diarization_async() -> None:
+    """Eager-load pyannote on a dedicated background thread so the heavy
+    one-time init (~22 s on first GPU spawn) is overlapped with the user
+    seeing the UI come up. Lazy-loading inside the import worker thread
+    has been observed to hang on Windows — we pre-warm here on a stable
+    thread that lives for the process lifetime.
+
+    Failures here are NON-fatal — sidecar starts even if HF token is
+    missing. The actual diarize call then surfaces the issue with the
+    user-friendly RuntimeError from DiarizationPipeline.
+    """
+    import threading
+
+    def _worker() -> None:
+        log = logging.getLogger("sidecar.preload")
+        try:
+            from sidecar.diarization import DiarizationPipeline
+
+            log.info("preloading diarization pipeline...")
+            DiarizationPipeline.instance().ensure_loaded()
+            log.info("diarization pipeline ready (device=%s)",
+                     DiarizationPipeline.instance().device)
+        except Exception as e:  # noqa: BLE001 — must never crash startup
+            log.warning("diarization preload failed: %s", e)
+
+    threading.Thread(
+        target=_worker, name="pyannote-preload", daemon=True
+    ).start()
+
+
 def main() -> int:
     _force_utf8_stdio()
     log_path = _setup_logging()
     log = logging.getLogger("sidecar")
     log.info("Blitztext sidecar v%s starting (log: %s)", rpc.__version__, log_path)
+
+    _preload_diarization_async()
 
     try:
         rpc.serve_stdio()
