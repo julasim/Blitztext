@@ -81,13 +81,18 @@ export default function App() {
         await onEvent("dictate.started", () =>
           void notifyDictate("Diktieren läuft", "Sprich, dann Strg+Alt+1 erneut zum Stoppen."),
         ),
-        await onEvent<{ text: string; injected: boolean }>(
+        await onEvent<{ text: string; injected: boolean; reason?: string }>(
           "dictate.done",
           (p) => {
             if (p.injected) {
               void notifyDictate(
                 "Diktiert",
                 `${p.text.split(/\s+/).filter(Boolean).length} Wörter eingefügt`,
+              );
+            } else if (p.reason === "empty_transcript") {
+              void notifyDictate(
+                "Nichts diktiert",
+                "Aufnahme war zu kurz oder das Mikrofon hat nichts erfasst.",
               );
             }
           },

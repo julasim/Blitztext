@@ -21,7 +21,7 @@ use std::os::windows::process::CommandExt;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::oneshot;
 
 // CREATE_NO_WINDOW — keeps a console from popping up on Windows when we
@@ -64,33 +64,59 @@ pub struct SidecarHandle {
 }
 
 impl SidecarHandle {
-    /// Spawn `python -m sidecar` from the project venv.
+    /// Spawn the Python sidecar.
     ///
-    /// In dev mode we locate the project root via `CARGO_MANIFEST_DIR` (which
-    /// points at `app/src-tauri/`) and step up two directories. In production
-    /// builds this will be replaced by an externalBin reference to the
-    /// PyInstaller-bundled `blitztext-sidecar.exe`.
+    /// Two paths:
+    /// * **Dev** (`debug_assertions`): `python -m sidecar` from the venv at
+    ///   `<project>/.venv-sidecar`. Lets us iterate on Python without
+    ///   re-running PyInstaller.
+    /// * **Release**: the PyInstaller-bundled `blitztext-sidecar.exe` we
+    ///   ship as a Tauri resource under `resources/binaries/sidecar/`.
     pub fn spawn<R: Runtime>(app: &AppHandle<R>) -> Result<Self, String> {
-        let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(|p| p.parent())
-            .ok_or_else(|| "cannot compute project root".to_string())?
-            .to_path_buf();
+        let (program, args, working_dir): (PathBuf, Vec<&str>, PathBuf) =
+            if cfg!(debug_assertions) {
+                let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .and_then(|p| p.parent())
+                    .ok_or_else(|| "cannot compute project root".to_string())?
+                    .to_path_buf();
 
-        let python_exe = project_root.join(".venv-sidecar/Scripts/python.exe");
-        if !python_exe.exists() {
-            return Err(format!(
-                "sidecar Python not found at {}; did you run `python -m venv .venv-sidecar`?",
-                python_exe.display()
-            ));
-        }
+                let python_exe = project_root.join(".venv-sidecar/Scripts/python.exe");
+                if !python_exe.exists() {
+                    return Err(format!(
+                        "sidecar Python not found at {}; did you run `python -m venv .venv-sidecar`?",
+                        python_exe.display()
+                    ));
+                }
+                (python_exe, vec!["-m", "sidecar"], project_root)
+            } else {
+                // Production: locate the bundled sidecar in the resource dir.
+                let resource_dir = app
+                    .path()
+                    .resource_dir()
+                    .map_err(|e| format!("resource_dir lookup failed: {e}"))?;
+                let sidecar_dir = resource_dir.join("binaries").join("sidecar");
+                let sidecar_exe = sidecar_dir.join("blitztext-sidecar.exe");
+                if !sidecar_exe.exists() {
+                    return Err(format!(
+                        "bundled sidecar not found at {}",
+                        sidecar_exe.display()
+                    ));
+                }
+                (sidecar_exe, vec![], sidecar_dir)
+            };
 
-        log::info!("spawning sidecar: {} -m sidecar", python_exe.display());
+        log::info!(
+            "spawning sidecar: {} {:?} (cwd={})",
+            program.display(),
+            args,
+            working_dir.display()
+        );
 
         #[allow(unused_mut)]
-        let mut cmd = Command::new(&python_exe);
-        cmd.args(["-m", "sidecar"])
-            .current_dir(&project_root)
+        let mut cmd = Command::new(&program);
+        cmd.args(&args)
+            .current_dir(&working_dir)
             // Force UTF-8 stdio so umlauts/em-dashes don't kill the
             // line reader thread on Windows (Python defaults to cp1252).
             .env("PYTHONIOENCODING", "utf-8")
