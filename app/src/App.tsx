@@ -53,18 +53,57 @@ export default function App() {
     };
   }, [loadConfig, loadMeetings, wireSidecarEvents]);
 
-  // Subscribe to global-shortcut events emitted by Rust (Ctrl+Shift+Space etc.)
+  // Subscribe to global-shortcut events emitted by Rust.
+  // toggle_recording → handled by Rust directly (mini-widget toggle).
+  // toggle_dictate → fire dictate.toggle on the sidecar so dictate works
+  //   even when the main window isn't focused.
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    const offs: Array<() => void> = [];
     (async () => {
       const { listen } = await import("@tauri-apps/api/event");
-      unlisten = await listen<{ action: string }>("bt://shortcut", (evt) => {
-        // For now: just log. Phase-2 step 2 wires the toggle to recording.
-        console.info("[bt://shortcut]", evt.payload);
-      });
+      const { onEvent } = await import("./lib/rpc");
+
+      offs.push(
+        await listen<{ action: string }>("bt://shortcut", (evt) => {
+          if (evt.payload.action === "toggle_dictate") {
+            void call("dictate.toggle").catch((e) =>
+              console.warn("[dictate.toggle] failed:", e),
+            );
+            return;
+          }
+          console.info("[bt://shortcut]", evt.payload);
+        }),
+      );
+
+      // Subtle dictate toasts so the user knows what happened — there's
+      // no UI surface for dictate, only the shortcut.
+      offs.push(
+        await onEvent("dictate.started", () =>
+          void notifyDictate("Diktieren läuft", "Sprich, dann Strg+Alt+Space erneut zum Stoppen."),
+        ),
+        await onEvent<{ text: string; injected: boolean }>(
+          "dictate.done",
+          (p) => {
+            if (p.injected) {
+              void notifyDictate(
+                "Diktiert",
+                `${p.text.split(/\s+/).filter(Boolean).length} Wörter eingefügt`,
+              );
+            }
+          },
+        ),
+        await onEvent<{ stage: string; message: string }>(
+          "dictate.error",
+          (p) =>
+            void notifyDictate(
+              "Diktier-Fehler",
+              `${p.stage}: ${p.message}`.slice(0, 200),
+            ),
+        ),
+      );
     })();
     return () => {
-      if (unlisten) unlisten();
+      for (const off of offs) off();
     };
   }, []);
 
@@ -180,6 +219,22 @@ function StatusBar({ version }: { version: string }) {
       </span>
     </div>
   );
+}
+
+async function notifyDictate(title: string, body: string): Promise<void> {
+  try {
+    const { isPermissionGranted, requestPermission, sendNotification } =
+      await import("@tauri-apps/plugin-notification");
+    let granted = await isPermissionGranted();
+    if (!granted) {
+      const r = await requestPermission();
+      granted = r === "granted";
+    }
+    if (!granted) return;
+    sendNotification({ title, body });
+  } catch (e) {
+    console.warn("[notify dictate] failed:", e);
+  }
 }
 
 function SidecarErrorBanner({ message }: { message: string }) {

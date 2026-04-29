@@ -408,6 +408,51 @@ def recording_state() -> dict:
     return RecordingSession.instance().state()
 
 
+# --- Dictate (legacy hotkey-driven flow ported into the sidecar) -----------
+
+
+@method("dictate.start")
+def dictate_start(cleanup: bool = False) -> dict:
+    """Begin dictate-mode capture. cleanup=True runs an LLM pass before
+    injecting (slower, removes filler words)."""
+    from sidecar.dictate import DictateSession
+
+    return DictateSession.instance().start(cleanup=cleanup)
+
+
+@method("dictate.stop")
+def dictate_stop() -> dict:
+    """Stop capture, transcribe, optionally cleanup, then inject the text
+    into the active foreground window via SendInput/Ctrl+V."""
+    from sidecar.dictate import DictateSession
+
+    return DictateSession.instance().stop()
+
+
+@method("dictate.cancel")
+def dictate_cancel() -> dict:
+    """Drop the in-flight dictate buffer without transcribing or injecting."""
+    from sidecar.dictate import DictateSession
+
+    return DictateSession.instance().cancel()
+
+
+@method("dictate.state")
+def dictate_state() -> dict:
+    from sidecar.dictate import DictateSession
+
+    return DictateSession.instance().state()
+
+
+@method("dictate.toggle")
+def dictate_toggle(cleanup: bool = False) -> dict:
+    """Single-call start-or-stop — what global shortcuts hit. Returns
+    ``{transition: 'start' | 'stop', ...}`` so the UI can update."""
+    from sidecar.dictate import DictateSession
+
+    return DictateSession.instance().toggle(cleanup=cleanup)
+
+
 # --- Settings (HF token, model defaults) -----------------------------------
 
 

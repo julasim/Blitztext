@@ -79,9 +79,23 @@ fn show_library_shortcut() -> Shortcut {
     Shortcut::new(Some(Modifiers::CONTROL), Code::KeyO)
 }
 
+/// Toggle dictate-mode: hold-or-press to start, again to stop.
+/// Note: many editors swallow Alt+Space for their own menu. We pick
+/// CTRL+ALT+Space to avoid stomping on common bindings.
+fn toggle_dictate_shortcut() -> Shortcut {
+    Shortcut::new(
+        Some(Modifiers::CONTROL | Modifiers::ALT),
+        Code::Space,
+    )
+}
+
 fn register_global_shortcuts<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let manager = app.global_shortcut();
-    for sc in [toggle_recording_shortcut(), show_library_shortcut()] {
+    for sc in [
+        toggle_recording_shortcut(),
+        show_library_shortcut(),
+        toggle_dictate_shortcut(),
+    ] {
         if let Err(e) = manager.register(sc) {
             log::warn!("failed to register shortcut {sc:?}: {e}");
         }
@@ -103,6 +117,18 @@ fn handle_global_shortcut<R: tauri::Runtime>(app: &tauri::AppHandle<R>, sc: &Sho
             serde_json::json!({"action": "toggle_recording"}),
         ) {
             log::warn!("failed to emit shortcut event: {e}");
+        }
+        return;
+    }
+    if *sc == toggle_dictate_shortcut() {
+        // Toggle dictate flow. The frontend doesn't even need to be
+        // visible — App.tsx listens for this and dispatches dictate.start
+        // / dictate.stop directly to the sidecar.
+        if let Err(e) = app.emit(
+            "bt://shortcut",
+            serde_json::json!({"action": "toggle_dictate"}),
+        ) {
+            log::warn!("failed to emit dictate shortcut event: {e}");
         }
     }
 }
