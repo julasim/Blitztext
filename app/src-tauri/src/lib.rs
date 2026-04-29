@@ -79,13 +79,13 @@ fn show_library_shortcut() -> Shortcut {
     Shortcut::new(Some(Modifiers::CONTROL), Code::KeyO)
 }
 
-/// Toggle dictate-mode: hold-or-press to start, again to stop.
-/// Note: many editors swallow Alt+Space for their own menu. We pick
-/// CTRL+ALT+Space to avoid stomping on common bindings.
+/// Toggle dictate-mode. CTRL+ALT+1 matches the legacy Blitztext binding
+/// so users coming from the old tray app keep their muscle memory; the
+/// digit-row also doesn't collide with the meeting Ctrl+Shift+Space.
 fn toggle_dictate_shortcut() -> Shortcut {
     Shortcut::new(
         Some(Modifiers::CONTROL | Modifiers::ALT),
-        Code::Space,
+        Code::Digit1,
     )
 }
 

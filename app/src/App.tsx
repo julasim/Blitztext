@@ -79,7 +79,7 @@ export default function App() {
       // no UI surface for dictate, only the shortcut.
       offs.push(
         await onEvent("dictate.started", () =>
-          void notifyDictate("Diktieren läuft", "Sprich, dann Strg+Alt+Space erneut zum Stoppen."),
+          void notifyDictate("Diktieren läuft", "Sprich, dann Strg+Alt+1 erneut zum Stoppen."),
         ),
         await onEvent<{ text: string; injected: boolean }>(
           "dictate.done",
