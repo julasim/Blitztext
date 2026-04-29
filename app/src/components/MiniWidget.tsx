@@ -4,7 +4,7 @@
 // (live timer + waveform + stop). Pure UI; the real work happens in
 // recording.start / recording.stop on the sidecar.
 
-import { Mic, MoreHorizontal, Pause, Square, X } from "lucide-react";
+import { Home, Mic, MoreHorizontal, Pause, Play, Square, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { call, onEvent } from "../lib/rpc";
 
@@ -20,6 +20,9 @@ type RecState =
 export function MiniWidget() {
   const [state, setState] = useState<RecState>({ name: "idle" });
   const [now, setNow] = useState(Date.now());
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [pauseStartedAt, setPauseStartedAt] = useState<number | null>(null);
+  const [accumulatedPauseMs, setAccumulatedPauseMs] = useState(0);
 
   // Tick the clock once a second while recording so the timer keeps moving.
   useEffect(() => {
@@ -31,43 +34,66 @@ export function MiniWidget() {
   // Sync to recording.* events: useful if the sidecar starts/stops via
   // a different surface (global shortcut, tray) while the widget is open.
   useEffect(() => {
-    let unA: undefined | (() => void);
-    let unB: undefined | (() => void);
-    let unC: undefined | (() => void);
+    const offs: Array<() => void> = [];
     (async () => {
-      unA = await onEvent<{ meeting_id: string; title?: string }>(
-        "recording.started",
-        (p) =>
-          setState({
-            name: "recording",
-            meeting_id: p.meeting_id,
-            startedAt: Date.now(),
-            paused: false,
-          }),
-      );
-      unB = await onEvent<{ meeting_id: string }>("recording.stopped", () => {
-        setState({ name: "idle" });
-        // Auto-close the widget after a stop — main window takes over.
-        void closeMiniWindow();
-      });
-      unC = await onEvent<{ meeting_id: string }>(
-        "recording.cancelled",
-        () => {
+      offs.push(
+        await onEvent<{ meeting_id: string; title?: string }>(
+          "recording.started",
+          (p) =>
+            setState({
+              name: "recording",
+              meeting_id: p.meeting_id,
+              startedAt: Date.now(),
+              paused: false,
+            }),
+        ),
+        await onEvent<{ meeting_id: string }>("recording.stopped", () => {
+          setState({ name: "idle" });
+          // Auto-close the widget after a stop — main window takes over.
+          void closeMiniWindow();
+        }),
+        await onEvent<{ meeting_id: string }>("recording.cancelled", () => {
           setState({ name: "idle" });
           void closeMiniWindow();
-        },
+        }),
+        await onEvent<{ meeting_id: string }>("recording.paused", () => {
+          setState((s) => (s.name === "recording" ? { ...s, paused: true } : s));
+          setPauseStartedAt(Date.now());
+        }),
+        await onEvent<{ meeting_id: string }>("recording.resumed", () => {
+          setState((s) =>
+            s.name === "recording" ? { ...s, paused: false } : s,
+          );
+          setPauseStartedAt((startedAt) => {
+            if (startedAt !== null) {
+              setAccumulatedPauseMs((ms) => ms + (Date.now() - startedAt));
+            }
+            return null;
+          });
+        }),
       );
     })();
     return () => {
-      unA?.();
-      unB?.();
-      unC?.();
+      for (const off of offs) off();
     };
   }, []);
 
+  // Subtract pause time so the timer reflects only actively-recorded
+  // seconds, not wall-clock since start.
   const elapsedSec =
     state.name === "recording"
-      ? Math.max(0, Math.floor((now - state.startedAt) / 1000))
+      ? Math.max(
+          0,
+          Math.floor(
+            (now -
+              state.startedAt -
+              accumulatedPauseMs -
+              (state.paused && pauseStartedAt !== null
+                ? now - pauseStartedAt
+                : 0)) /
+              1000,
+          ),
+        )
       : 0;
 
   const start = async () => {
@@ -108,6 +134,31 @@ export function MiniWidget() {
       /* ignore — we close anyway */
     }
     void closeMiniWindow();
+  };
+
+  const togglePause = async () => {
+    if (state.name !== "recording") return;
+    try {
+      await call(state.paused ? "recording.resume" : "recording.pause");
+      // Local state will be updated by the recording.paused / .resumed event.
+    } catch (e) {
+      console.error("toggle pause failed:", e);
+    }
+  };
+
+  const openMainWindow = async () => {
+    setMenuOpen(false);
+    try {
+      const { Window } = await import("@tauri-apps/api/window");
+      const main = await Window.getByLabel("main");
+      if (main) {
+        await main.show();
+        await main.unminimize();
+        await main.setFocus();
+      }
+    } catch (e) {
+      console.error("open main failed:", e);
+    }
   };
 
   return (
@@ -201,17 +252,22 @@ export function MiniWidget() {
           alignItems: "center",
           justifyContent: "center",
           gap: 14,
+          position: "relative",
         }}
       >
         {state.name === "recording" && (
           <button
             type="button"
-            disabled
+            onClick={togglePause}
             style={iconBtn(36)}
-            title="Pause (in Phase 3)"
-            aria-label="Pause"
+            title={state.paused ? "Fortsetzen" : "Pause"}
+            aria-label={state.paused ? "Fortsetzen" : "Pause"}
           >
-            <Pause size={14} />
+            {state.paused ? (
+              <Play size={14} fill="currentColor" strokeWidth={0} />
+            ) : (
+              <Pause size={14} fill="currentColor" strokeWidth={0} />
+            )}
           </button>
         )}
         {state.name === "idle" || state.name === "starting" ? (
@@ -236,15 +292,18 @@ export function MiniWidget() {
           </button>
         )}
         {state.name === "recording" && (
-          <button
-            type="button"
-            disabled
-            style={iconBtn(36)}
-            title="Mehr"
-            aria-label="Mehr"
-          >
-            <MoreHorizontal size={16} />
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => setMenuOpen((o) => !o)}
+              style={iconBtn(36)}
+              title="Mehr"
+              aria-label="Mehr"
+            >
+              <MoreHorizontal size={16} />
+            </button>
+            {menuOpen && <MoreMenu onOpenMain={openMainWindow} onCancel={cancel} onClose={() => setMenuOpen(false)} />}
+          </>
         )}
       </div>
 
@@ -268,6 +327,93 @@ export function MiniWidget() {
         </div>
       )}
     </div>
+  );
+}
+
+function MoreMenu({
+  onOpenMain,
+  onCancel,
+  onClose,
+}: {
+  onOpenMain: () => void;
+  onCancel: () => void;
+  onClose: () => void;
+}) {
+  // Click-outside to close.
+  useEffect(() => {
+    const onDocClick = () => onClose();
+    const t = window.setTimeout(
+      () => document.addEventListener("click", onDocClick, { once: true }),
+      0,
+    );
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener("click", onDocClick);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        position: "absolute",
+        right: 16,
+        bottom: 56,
+        minWidth: 200,
+        background: "var(--bt-white)",
+        border: "1px solid var(--bt-line)",
+        borderRadius: "var(--radius-lg)",
+        boxShadow: "var(--shadow-panel)",
+        padding: 4,
+        zIndex: 10,
+      }}
+    >
+      <MenuItem onClick={onOpenMain} icon={<Home size={14} />}>
+        Hauptfenster öffnen
+      </MenuItem>
+      <MenuItem onClick={onCancel} icon={<Trash2 size={14} />} danger>
+        Aufnahme verwerfen
+      </MenuItem>
+    </div>
+  );
+}
+
+function MenuItem({
+  onClick,
+  icon,
+  danger,
+  children,
+}: {
+  onClick: () => void;
+  icon: React.ReactNode;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        width: "100%",
+        padding: "8px 10px",
+        borderRadius: "var(--radius-sm)",
+        background: hover ? "var(--bt-paper-2)" : "transparent",
+        color: danger ? "var(--bt-red-ink)" : "var(--bt-ink-soft)",
+        fontSize: "var(--fs-sm)",
+        textAlign: "left",
+      }}
+    >
+      <span style={{ color: danger ? "var(--bt-red)" : "var(--bt-muted-2)" }}>
+        {icon}
+      </span>
+      {children}
+    </button>
   );
 }
 

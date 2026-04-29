@@ -376,6 +376,22 @@ def recording_stop() -> dict:
     return RecordingSession.instance().stop()
 
 
+@method("recording.pause")
+def recording_pause() -> dict:
+    """Pause the audio buffer without ending the session."""
+    from sidecar.recording import RecordingSession
+
+    return RecordingSession.instance().pause()
+
+
+@method("recording.resume")
+def recording_resume() -> dict:
+    """Resume capturing audio after a pause."""
+    from sidecar.recording import RecordingSession
+
+    return RecordingSession.instance().resume()
+
+
 @method("recording.cancel")
 def recording_cancel() -> dict:
     """Abort the current mic capture and delete the in-progress meeting."""

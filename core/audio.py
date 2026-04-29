@@ -34,6 +34,7 @@ class AudioRecorder:
         self._stream: sd.InputStream | None = None
         self._lock = threading.Lock()
         self._recording = False
+        self._paused = False
         self._cap_warned = False
         # Per-instance override (e.g. meeting-mode 2 h, dictation 11 min).
         self._max_samples = (
@@ -46,6 +47,23 @@ class AudioRecorder:
     def is_recording(self) -> bool:
         return self._recording
 
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
+
+    def pause(self) -> None:
+        """Stop appending new frames to the buffer; the input stream stays
+        alive so resume() picks up immediately. Idempotent."""
+        with self._lock:
+            if self._recording:
+                self._paused = True
+
+    def resume(self) -> None:
+        """Continue capturing into the buffer. Idempotent."""
+        with self._lock:
+            if self._recording:
+                self._paused = False
+
     def start(self) -> None:
         with self._lock:
             if self._recording:
@@ -53,6 +71,7 @@ class AudioRecorder:
             self._buffer.clear()
             self._buffer_samples = 0
             self._cap_warned = False
+            self._paused = False
             try:
                 self._stream = sd.InputStream(
                     samplerate=self.SAMPLE_RATE,
@@ -85,7 +104,7 @@ class AudioRecorder:
     def _audio_callback(self, indata: np.ndarray, frames: int, time_info, status) -> None:
         # Lock protects concurrent access to _buffer from stop()
         with self._lock:
-            if not self._recording:
+            if not self._recording or self._paused:
                 return
             # Hard-cap: silently drop frames once the buffer reaches the
             # safety limit. Log a single warning so a post-mortem shows it.

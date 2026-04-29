@@ -61,6 +61,10 @@ class RecordingSession:
     def is_recording(self) -> bool:
         return self._recorder is not None and self._recorder.is_recording
 
+    @property
+    def is_paused(self) -> bool:
+        return self._recorder is not None and self._recorder.is_paused
+
     # --- API exposed by the methods.py wrappers -------------------------
 
     def start(
@@ -195,6 +199,26 @@ class RecordingSession:
 
         return {"ok": True, "meeting_id": mid, "duration_ms": duration_ms}
 
+    def pause(self) -> dict:
+        with self._lock:
+            if not self.is_recording or self._recorder is None:
+                raise RuntimeError("Keine laufende Aufnahme.")
+            self._recorder.pause()
+            mid = self._meeting_id
+        emit_event("recording.paused", {"meeting_id": mid})
+        _log.info("recording paused: meeting=%s", mid)
+        return {"ok": True, "meeting_id": mid}
+
+    def resume(self) -> dict:
+        with self._lock:
+            if not self.is_recording or self._recorder is None:
+                raise RuntimeError("Keine laufende Aufnahme.")
+            self._recorder.resume()
+            mid = self._meeting_id
+        emit_event("recording.resumed", {"meeting_id": mid})
+        _log.info("recording resumed: meeting=%s", mid)
+        return {"ok": True, "meeting_id": mid}
+
     def cancel(self) -> dict:
         """Stop the mic and discard everything (meeting row + audio)."""
         with self._lock:
@@ -219,6 +243,7 @@ class RecordingSession:
         page reload (HMR or a window re-open)."""
         return {
             "is_recording": self.is_recording,
+            "is_paused": self.is_paused,
             "meeting_id": self._meeting_id,
             "title": self._title,
             "language": self._language,
