@@ -227,6 +227,8 @@ export const useMeetingStore = create<State>((set, get) => ({
         void get().loadMeetings();
         const active = get().active;
         if (active?.id === p.meeting_id) void get().loadMeeting(p.meeting_id);
+        // Windows toast — best-effort, ask permission lazily.
+        void notifyMeetingDone(p.meeting_id);
       },
     );
     const offError = await onEvent<{ meeting_id: string; message: string }>(
@@ -270,3 +272,33 @@ export const useMeetingStore = create<State>((set, get) => ({
     };
   },
 }));
+
+// --- Helpers --------------------------------------------------------------
+
+async function notifyMeetingDone(meetingId: string): Promise<void> {
+  try {
+    const meta = await call<{ title: string; duration_ms: number }>(
+      "meeting.get",
+      { id: meetingId },
+    );
+    const mins = Math.round((meta.duration_ms || 0) / 60000);
+    const {
+      isPermissionGranted,
+      requestPermission,
+      sendNotification,
+    } = await import("@tauri-apps/plugin-notification");
+
+    let granted = await isPermissionGranted();
+    if (!granted) {
+      const r = await requestPermission();
+      granted = r === "granted";
+    }
+    if (!granted) return;
+    sendNotification({
+      title: "Transkript fertig",
+      body: `${meta.title} · ${mins ? mins + " min" : "kurz"}`,
+    });
+  } catch (e) {
+    console.warn("[notify] meeting.done toast failed:", e);
+  }
+}
