@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the main Blitztext window: core, file dialogs, filesystem reads for drop targets, and shell for the sidecar.",
+  "description": "Permissions for the main Blitztext window: core, file dialogs, global shortcuts, notifications. Kein fs/shell — Dateien fasst nur der Python-Sidecar an, gespawnt über std::process::Command.",
   "windows": [
     "main",
     "mini"
@@ -20,8 +20,6 @@
     "dialog:allow-confirm",
     "dialog:allow-ask",
     "dialog:allow-message",
-    "fs:default",
-    "shell:default",
     "global-shortcut:default",
     "notification:default"
   ]
