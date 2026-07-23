@@ -8,24 +8,27 @@ __pycache__/
 venv/
 env/
 
-# PyInstaller output
+# PyInstaller output (build-sidecar.spec)
 build/
 dist/
-dist-installer/
 *.manifest
 *.spec.bak
 
-# Tauri / React / Node (new app/ tree)
+# Tauri / React / Node
 app/node_modules/
 app/dist/
 app/src-tauri/target/
-app/src-tauri/binaries/
 app/.vite/
 app/*.log
 
-# Downloaded Whisper models (too large for git, auto-downloaded on first run)
-models/*
-!models/.gitkeep
+# Gebündelter Sidecar (~4,8 GB PyInstaller-Output). Der Platzhalter bleibt
+# getrackt: fehlt der Ordner, bricht schon `cargo check` am Resource-Glob
+# aus tauri.conf.json — mit einer Meldung, die nach Config-Fehler aussieht.
+app/src-tauri/binaries/sidecar/*
+!app/src-tauri/binaries/sidecar/PLATZHALTER.txt
+
+# Lokales Claude-Tooling (Workspace-Konvention: nie committen)
+.claude/
 
 # IDE / OS
 .vscode/
