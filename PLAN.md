@@ -39,22 +39,24 @@ Blitztext ist heute eine Windows-Tray-Utility (PyQt6) für lokales Speech-to-Tex
 
 ## Repo-Layout
 
-### Pfad-Migration
+### Pfad-Migration (erledigt)
 
-Bestehender Projektpfad: `C:\Users\juliu\OneDrive - Mag. Georg Sima\3_Unternehmen\KI-OS\Blitztext\Blitztext\`
+Historisch: das Projekt lag in OneDrive, wurde für Phase 0 auf den Desktop
+verschoben (Sync-Konflikte mit `node_modules/` und `target/`) und ist am
+2026-07-14 in den Workspace eingezogen.
 
-**Neuer Dev-Pfad:** `C:\Users\juliu\Desktop\Blitztext\` (außerhalb OneDrive, vermeidet Sync-Konflikte mit `node_modules/` und `target/`).
-
-Migration-Strategie:
-1. `git push -u origin feat/meeting-mode` — Branch aufs Remote sichern.
-2. Kompletten Projektordner `C:\Users\juliu\OneDrive...\Blitztext\` nach `C:\Users\juliu\Desktop\Blitztext\` **verschieben** (inkl. `.git/`). Der alte OneDrive-Pfad ist danach leer.
-3. `cd C:\Users\juliu\Desktop\Blitztext && git status` — verifizieren: sauber auf `feat/meeting-mode`.
-4. Remote-Fetch testen: `git fetch && git log --oneline -5`.
+**Aktueller Dev-Pfad:** `C:\Users\juliu\Documents\Claude\apps\blitztext\` —
+weiterhin außerhalb OneDrive. Alle Pfadangaben weiter unten sind relativ zu
+diesem Ordner.
 
 ### Ziel-Struktur (nach Phase 1)
 
+> Stand April 2026. Die als „legacy" markierten Teile (`main.py`, `ui/`,
+> `config/`, `build.spec`, `requirements.txt`) sind am 2026-07-23 gelöscht
+> worden — siehe `CLAUDE.md` § Änderungslog.
+
 ```
-C:\Users\juliu\Desktop\Blitztext\
+blitztext/
 ├── main.py                         # (legacy) PyQt-Tray, lauffähig
 ├── core/                           # Shared — wird von legacy UND Sidecar importiert
 │   ├── audio.py                    # reuse unverändert (außer MAX_BUFFER_SEC)
@@ -316,7 +318,7 @@ Dictate-Modus wird im Frontend in Phase 1 **nicht** eingebaut — der bestehende
 
 ## Verification (End-to-End-Smoke-Test nach Phase 1)
 
-1. **Cold Start:** `cd C:\Users\juliu\Desktop\Blitztext\app && cargo tauri dev` — Fenster öffnet, Library-View leer, Statusbar zeigt „Sidecar ready, CUDA: ja, Ollama: ja".
+1. **Cold Start:** `cd app && cargo tauri dev` — Fenster öffnet, Library-View leer, Statusbar zeigt „Sidecar ready, CUDA: ja, Ollama: ja".
 2. **Import:** Drag 10-minütige Test-WAV auf Drop-Zone → `MeetingProcessing`-View erscheint → Stage-Bar läuft durch alle 5 Stages → automatische Weiterleitung zu `MeetingReview`.
 3. **Review:** Linke Spalte zeigt 2–5 Sprecher mit Farben und %-Anteilen. Mitte zeigt Turns mit Timestamp und Sprecher-Prefix. Rechts zeigt Meta + Cleanup-Toggle (aus).
 4. **Speaker-Rename:** Klick auf „Speaker 1" → Popover öffnet → Audio-Snippet spielt ab → Namen eingeben „Julius" → bestätigen → alle Turns zeigen jetzt „Julius".
@@ -331,15 +333,15 @@ Dictate-Modus wird im Frontend in Phase 1 **nicht** eingebaut — der bestehende
 
 ## Kritische Dateien für Implementierung (Referenzen)
 
-- `C:\Users\juliu\Desktop\Blitztext\sidecar\rpc.py` — JSON-RPC-Dispatcher
-- `C:\Users\juliu\Desktop\Blitztext\sidecar\meeting_pipeline.py` — Orchestration
-- `C:\Users\juliu\Desktop\Blitztext\sidecar\merger.py` — Word-zu-Sprecher-Merge
-- `C:\Users\juliu\Desktop\Blitztext\sidecar\diarization.py` — pyannote-Wrapper
-- `C:\Users\juliu\Desktop\Blitztext\app\src-tauri\src\sidecar.rs` — Rust-IPC
-- `C:\Users\juliu\Desktop\Blitztext\app\src\views\MeetingReview.tsx` — Haupt-UI
-- `C:\Users\juliu\Desktop\Blitztext\core\audio.py` — **bestehend**, unverändert reusen
-- `C:\Users\juliu\Desktop\Blitztext\core\transcription.py` — **bestehend**, um `word_timestamps=True` erweitern
-- `C:\Users\juliu\Desktop\Blitztext\core\llm.py` — **bestehend**, `_call_ollama_local` + `cleanup_turn` ergänzen (Referenz: bestehende `_call_ollama_cloud` Body-Struktur)
+- `sidecar\rpc.py` — JSON-RPC-Dispatcher
+- `sidecar\meeting_pipeline.py` — Orchestration
+- `sidecar\merger.py` — Word-zu-Sprecher-Merge
+- `sidecar\diarization.py` — pyannote-Wrapper
+- `app\src-tauri\src\sidecar.rs` — Rust-IPC
+- `app\src\views\MeetingReview.tsx` — Haupt-UI
+- `core\audio.py` — **bestehend**, unverändert reusen
+- `core\transcription.py` — **bestehend**, um `word_timestamps=True` erweitern
+- `core\llm.py` — **bestehend**, `_call_ollama_local` + `cleanup_turn` ergänzen (Referenz: bestehende `_call_ollama_cloud` Body-Struktur)
 
 ---
 

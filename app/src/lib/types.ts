@@ -6,8 +6,6 @@ export type PingResult = {
   version: string;
 };
 
-// --- Planned (Phase 1) — stubs so the rest of the app can import them early ---
-
 export type Word = { t0: number; t1: number; w: string };
 
 export type Turn = {
@@ -37,7 +35,8 @@ export type MeetingListItem = {
   title: string;
   duration_ms: number;
   created_at: string;
-  status: "processing" | "ready" | "error";
+  // "recording" setzt sidecar/recording.py, solange das Mikrofon läuft.
+  status: "recording" | "processing" | "ready" | "error";
 };
 
 export type MeetingFull = MeetingListItem & {

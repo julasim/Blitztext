@@ -1,7 +1,13 @@
 // Drag & drop zone + file-picker fallback.
-// The RPC `meeting.import_file` is still a stub pending the pyannote +
-// whisper pipeline, so we keep the UI functional but surface a friendly
-// "not yet wired" state on submission.
+//
+// `meeting.import_file` kehrt sofort mit der meeting_id zurück und arbeitet
+// im Worker-Thread weiter — deshalb springen wir direkt in die Review-Ansicht,
+// die den Fortschritt aus den meeting.progress-Events zeichnet.
+//
+// Aktuell genau eine Datei pro Vorgang: der Dialog steht auf multiple:false,
+// und der Drop nimmt nur den ersten passenden Pfad. Für Batch-Import braucht
+// es zuerst eine serielle Queue im Sidecar — zwei gleichzeitige Importe
+// würden sich denselben Whisper-Cache und die GPU teilen.
 
 import { Upload, FileAudio, X } from "lucide-react";
 import { useEffect, useState } from "react";

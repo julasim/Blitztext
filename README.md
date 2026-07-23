@@ -1,41 +1,57 @@
 # Blitztext
 
-Lokaler Speech-to-Text-Desktop für Windows. Dictate per globalem Hotkey und —
-in Arbeit — Meeting-Transkription mit Sprecher-Diarization und LLM-Cleanup.
-Alles on-device.
+Lokaler Speech-to-Text-Desktop für Windows. Meeting-Transkription mit
+Sprecher-Diarization und LLM-Cleanup, dazu Diktieren per globalem Hotkey.
+Alles on-device — kein Cloud-Dienst, keine offenen Ports.
 
 ## Repository-Struktur
 
 | Pfad | Rolle |
 |---|---|
-| `main.py`, `core/`, `config/`, `ui/` | **Legacy** Tray-Utility (PyQt6) — aktuell die ausgelieferte Version (v1.0.25). Bleibt lauffähig, bis der neue Tauri-Build in Phase 2 Dictate übernimmt. |
-| `sidecar/` | **Neu** — Python-Backend für die Tauri-App. JSON-RPC-Server über stdin/stdout. Siehe `sidecar/rpc_schema.md` für den Contract. |
-| `app/` | **Neu** — Tauri 2 + React + TypeScript. Eigentliche Desktop-App, die den Sidecar als Child-Prozess spawnt. |
-| `PLAN.md` | Verbindliche Roadmap für den Umbau (Phase 0 Setup → Phase 1 Meeting-MVP → Phase 2 Dictate-Migration). |
+| `app/` | Tauri 2 + React + TypeScript. Die Desktop-App; spawnt den Sidecar als Child-Prozess. |
+| `sidecar/` | Python-Backend. JSON-RPC 2.0 über stdin/stdout, siehe `sidecar/rpc_schema.md`. Besitzt die SQLite-DB. |
+| `core/` | Geteilte Bausteine: Mikrofon (`audio.py`), Whisper (`transcription.py`), Ollama (`llm.py`), Text-Injektion (`injector.py`), Log. |
+| `transcribe.py` | CLI: eine Audiodatei durch die volle Pipeline → Markdown. Ohne GUI. |
+| `PLAN.md` | Roadmap des Umbaus (Phase 0 Setup → Phase 1 Meeting-MVP → Phase 2 Dictate-Migration). |
+| `BUILD.md` | Release-Prozess (PyInstaller-Sidecar + Tauri-MSI). |
 
-## Dev-Setup (Meeting-Modus-Zweig)
+Der PyQt-Tray (v1.0.25) wurde am 2026-07-23 entfernt; er liegt unverändert auf
+Branch `main` und in der Historie.
 
-Siehe `PLAN.md` § *Phase 0 — Setup* für die vollständige Liste. Vorausgesetzt:
-Rust + MSVC Build Tools, Python 3.11, Node 20+, Ollama, HuggingFace-Account
-mit akzeptierten pyannote-Lizenzen.
+## Voraussetzungen
+
+Rust + MSVC Build Tools, Python 3.11, Node 20+, Ollama (für den Cleanup) und
+ein HuggingFace-Account mit akzeptierten pyannote-Lizenzen. Details in
+`PLAN.md` § *Phase 0 — Setup*.
+
+## Dev-Setup
 
 ```powershell
-# Python-Sidecar
-py -3.11 -m venv .venv-sidecar
-.\.venv-sidecar\Scripts\pip install -r sidecar\requirements.txt
+# Python-Sidecar (CUDA-Index ist Pflicht, sonst kommt Torch ohne GPU-Support)
+python3.11 -m venv .venv-sidecar
+.\.venv-sidecar\Scripts\pip install -r sidecar\requirements.txt `
+  --index-url https://download.pytorch.org/whl/cu121 `
+  --extra-index-url https://pypi.org/simple
 
 # Frontend + Tauri
 cd app
 npm install
-npm run tauri dev
+npx tauri dev        # kein `npm run tauri` — das Script gibt es nicht
 ```
 
-## Legacy-Build (Dictate-Tray)
+Im Dev-Modus startet die Rust-Shell `python -m sidecar` aus `.venv-sidecar`;
+ein gebauter Sidecar wird dafür nicht gebraucht.
+
+## Tests
+
+Vier Smoke-Skripte, kein Runner:
 
 ```powershell
-pip install -r requirements.txt
-pyinstaller build.spec
+.\.venv-sidecar\Scripts\python.exe -m sidecar._smoke_merger   # synthetisch, keine Deps
+.\.venv-sidecar\Scripts\python.exe -m sidecar._smoke_store    # merger → SQLite → get_meeting
+.\.venv-sidecar\Scripts\python.exe -m sidecar._smoke_cleanup  # braucht Ollama
+.\.venv-sidecar\Scripts\python.exe -m sidecar._smoke_e2e      # braucht Ollama
 ```
 
-Produziert `dist/Blitztext/Blitztext.exe` + InnoSetup-Installer unter `dist-installer/`.
-Siehe `BUILD.md`.
+`_smoke_store` und `_smoke_e2e` isolieren `APPDATA` in einem Temp-Verzeichnis —
+die echte Meeting-DB bleibt unberührt.
