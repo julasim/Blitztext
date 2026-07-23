@@ -105,8 +105,8 @@ export function Settings() {
               lineHeight: 1.5,
             }}
           >
-            Modell-Auswahl pro Aufnahme (klein/groß für Geschwindigkeit vs.
-            Qualität) folgt mit der Dictate-Migration.
+            Modell-Auswahl pro Import (klein/groß für Geschwindigkeit vs.
+            Qualität) ist geplant.
           </p>
         </Card>
 
@@ -125,8 +125,8 @@ export function Settings() {
             lineHeight: 1.6,
           }}
         >
-          Weitere Einstellungen (Diktier-Modus-Hotkeys, LLM-Provider-Keys,
-          Sprache) folgen mit der Dictate-Migration.
+          Sprache und Sprecher-Trennung werden künftig pro Import gewählt,
+          nicht global.
         </p>
       </div>
     </div>

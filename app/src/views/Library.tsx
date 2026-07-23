@@ -39,12 +39,12 @@ export function Library() {
       </div>
       <div style={{ textAlign: "center", maxWidth: 480 }}>
         <h2 style={{ fontSize: "var(--fs-xl)", marginBottom: 8 }}>
-          {meetings.length === 0 ? "Kein Meeting vorhanden" : "Wähle ein Meeting"}
+          {meetings.length === 0 ? "Noch kein Transkript" : "Transkript wählen"}
         </h2>
         <p style={{ color: "var(--bt-muted)", lineHeight: 1.6 }}>
           {meetings.length === 0
-            ? "Importiere eine Audio-Datei (WAV, MP3, M4A, FLAC, OGG). Blitztext transkribiert lokal, erkennt Sprecher automatisch und bereitet das Protokoll für dich vor."
-            : "Öffne eine Aufnahme aus der Sidebar, oder starte einen neuen Import."}
+            ? "Importiere eine Audio-Datei (MP3, WAV, M4A, FLAC, OGG). Blitztext transkribiert lokal, erkennt Sprecher automatisch und bereitet das Protokoll für dich vor."
+            : "Öffne ein Transkript aus der Seitenleiste, oder importiere eine weitere Datei."}
         </p>
       </div>
       <button

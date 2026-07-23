@@ -6,11 +6,10 @@
 // show a blocking banner so the user knows what's wrong — the rest of
 // the app won't function anyway.
 
-import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { Titlebar } from "./components/Titlebar";
-import { call, onEvent } from "./lib/rpc";
+import { call } from "./lib/rpc";
 import { useMeetingStore } from "./state/useMeetingStore";
 import { Library } from "./views/Library";
 import { MeetingImport } from "./views/MeetingImport";
@@ -53,62 +52,6 @@ export default function App() {
       if (unwire) unwire();
     };
   }, [loadConfig, loadMeetings, wireSidecarEvents]);
-
-  // Subscribe to global-shortcut events emitted by Rust.
-  // toggle_recording → handled by Rust directly (mini-widget toggle).
-  // toggle_dictate → fire dictate.toggle on the sidecar so dictate works
-  //   even when the main window isn't focused.
-  useEffect(() => {
-    const offs: Array<() => void> = [];
-    (async () => {
-      offs.push(
-        await listen<{ action: string }>("bt://shortcut", (evt) => {
-          if (evt.payload.action === "toggle_dictate") {
-            void call("dictate.toggle").catch((e) =>
-              console.warn("[dictate.toggle] failed:", e),
-            );
-            return;
-          }
-          console.info("[bt://shortcut]", evt.payload);
-        }),
-      );
-
-      // Subtle dictate toasts so the user knows what happened — there's
-      // no UI surface for dictate, only the shortcut.
-      offs.push(
-        await onEvent("dictate.started", () =>
-          void notifyDictate("Diktieren läuft", "Sprich, dann Strg+Alt+1 erneut zum Stoppen."),
-        ),
-        await onEvent<{ text: string; injected: boolean; reason?: string }>(
-          "dictate.done",
-          (p) => {
-            if (p.injected) {
-              void notifyDictate(
-                "Diktiert",
-                `${p.text.split(/\s+/).filter(Boolean).length} Wörter eingefügt`,
-              );
-            } else if (p.reason === "empty_transcript") {
-              void notifyDictate(
-                "Nichts diktiert",
-                "Aufnahme war zu kurz oder das Mikrofon hat nichts erfasst.",
-              );
-            }
-          },
-        ),
-        await onEvent<{ stage: string; message: string }>(
-          "dictate.error",
-          (p) =>
-            void notifyDictate(
-              "Diktier-Fehler",
-              `${p.stage}: ${p.message}`.slice(0, 200),
-            ),
-        ),
-      );
-    })();
-    return () => {
-      for (const off of offs) off();
-    };
-  }, []);
 
   if (boot.status === "error") {
     return (
@@ -222,22 +165,6 @@ function StatusBar({ version }: { version: string }) {
       </span>
     </div>
   );
-}
-
-async function notifyDictate(title: string, body: string): Promise<void> {
-  try {
-    const { isPermissionGranted, requestPermission, sendNotification } =
-      await import("@tauri-apps/plugin-notification");
-    let granted = await isPermissionGranted();
-    if (!granted) {
-      const r = await requestPermission();
-      granted = r === "granted";
-    }
-    if (!granted) return;
-    sendNotification({ title, body });
-  } catch (e) {
-    console.warn("[notify dictate] failed:", e);
-  }
 }
 
 function SidecarErrorBanner({ message }: { message: string }) {

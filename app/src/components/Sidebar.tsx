@@ -113,7 +113,7 @@ export function Sidebar() {
               marginTop: 2,
             }}
           >
-            Meeting Mode
+            Transkription
           </div>
         </div>
       </div>
@@ -137,7 +137,7 @@ export function Sidebar() {
           }}
         >
           <Plus size={16} strokeWidth={2} />
-          Neues Meeting
+          Datei transkribieren
         </button>
       </div>
 
@@ -153,7 +153,7 @@ export function Sidebar() {
             letterSpacing: "0.08em",
           }}
         >
-          Aufnahmen
+          Transkripte
         </div>
 
         {loading && (

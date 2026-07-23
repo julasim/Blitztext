@@ -35,8 +35,7 @@ export type MeetingListItem = {
   title: string;
   duration_ms: number;
   created_at: string;
-  // "recording" setzt sidecar/recording.py, solange das Mikrofon läuft.
-  status: "recording" | "processing" | "ready" | "error";
+  status: "processing" | "ready" | "error";
 };
 
 export type MeetingFull = MeetingListItem & {

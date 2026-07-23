@@ -12,29 +12,38 @@ Zuletzt aktualisiert: 2026-07-23
 
 ## Worum geht's
 
-Lokale Speech-to-Text-Desktop-App für Windows, alles on-device. Eigenes Produkt
-von Julius (GitHub `julasim/Blitztext`, Arbeitsbranch `feat/meeting-mode`).
-Zwei Modi: **Meeting-Transkription** (Audio-Import → Diarization →
-Sprecher-Review → LLM-Cleanup → Markdown-Export) und **Dictate** (globaler
-Hotkey Strg+Alt+1 → Whisper → Text ins aktive Fenster).
+**Transkribiert Audiodateien lokal** (MP3, WAV, M4A, FLAC, OGG) auf Windows:
+Import → Whisper → Sprecher-Trennung → Review → LLM-Cleanup → Export.
+Eigenes Produkt von Julius (GitHub `julasim/Blitztext`, Arbeitsbranch
+`feat/meeting-mode`). Alles on-device.
 
-**Nächste Richtung (ab 2026-07-23): Spezialisierung auf MP3-Transkription.**
-Importierte Dateien statt Live-Mitschnitt — Batch-Queue, Sprach-/Modellwahl,
-Untertitel-Exports. Analyse und Ausbaustufen siehe Änderungslog.
+**Fokus seit 2026-07-23: nur noch Dateien.** Diktat per Hotkey und
+Live-Mitschnitt sind entfernt — die App fasst kein Mikrofon mehr an. Was
+ausgebaut wird: Batch-Queue, Sprach-/Modellwahl beim Import,
+Untertitel-Exports. Siehe „Offene Punkte".
 
 ## Status
 
-**Architektur-Umbau (läuft, Phase 2 von 3):**
+**Architektur:**
 - Shell ist Tauri 2 + React + TS (`app/`), der Python-Kern läuft als Sidecar
   (JSON-RPC 2.0 über ndjson/stdio, keine offenen Ports, SQLite gehört dem
   Sidecar). Begründung: High-Fidelity-Design braucht Web-Stack.
-- Dictate ist nach Tauri+Sidecar portiert; Roadmap verbindlich in `PLAN.md`.
-- **Der PyQt-Tray ist am 2026-07-23 gelöscht worden.** Die ausgelieferte
-  v1.0.25 liegt unverändert auf Branch `main` und in der Historie; die
-  installierte Version unter `C:\Program Files\Blitztext\` läuft davon
-  unberührt weiter. Zurückholen einzelner Dateien:
-  `git checkout main -- <pfad>`.
 - **Installer: MSI/WiX** (entschieden 2026-07-23, `tauri.conf.json`).
+
+**Zwei Rückbauten am 2026-07-23** — beides bleibt über die Git-Historie
+erreichbar (`git checkout <commit> -- <pfad>`):
+- **PyQt-Tray gelöscht.** Die ausgelieferte v1.0.25 liegt unverändert auf
+  Branch `main`; die installierte Version unter `C:\Program Files\Blitztext\`
+  läuft davon unberührt weiter.
+- **Mikrofon-Funktionen gelöscht** (Diktat per Hotkey, Live-Mitschnitt,
+  Mini-Widget). Entschieden, um die App auf Datei-Transkription zu
+  fokussieren. Damit sind auch alle globalen Shortcuts weg — inklusive
+  Strg+O, das als OS-weites Kürzel ohnehin fragwürdig war. Die App fordert
+  kein Mikrofonrecht mehr an.
+
+**`PLAN.md` ist teilweise überholt:** Phase 2 (Dictate-Migration,
+System-Loopback, Settings-Unification) ist mit der Fokussierung hinfällig.
+Phase 1 und die Architektur-Begründungen gelten weiter.
 
 **Einzug in den Workspace (2026-07-14):**
 - Von `Desktop\Blitztext` hierher verschoben (bewusst außerhalb OneDrive —
@@ -68,13 +77,24 @@ plus CUDA-Verifikation.
   gerade benennt. Rename und Merge sind in `SpeakerList.tsx` fertig, das Snippet
   nicht — es gibt weder die RPC-Methode in `sidecar/methods.py` noch ein
   `<audio>`-Element im Popover.
-- **MP3-Ausbau, Stufe A (nächster Schritt):** serielle **Job-Queue im Sidecar**.
-  Heute startet jeder `meeting.import_file` sofort einen eigenen Thread — zwei
-  parallele Importe teilen sich `_transcriber_cache` und die GPU. Ohne Queue
-  kein Batch. Danach Stufe B (Sprache/Modell/„nicht kopieren" im Import-UI,
-  `meeting.reprocess`) und Stufe C (SRT/VTT/DOCX, `speaker.sample`).
-- Aus `PLAN.md` Phase 2 noch offen: **System-Loopback** (WASAPI/`pyaudiowpatch`,
-  um Teams/Zoom mitzuhören) und die **Settings-Unification**.
+- **Nächster Schritt: serielle Job-Queue im Sidecar.** Heute startet jeder
+  `meeting.import_file` einen eigenen Thread, den niemand abbrechen kann;
+  zwei parallele Importe teilen sich `_transcriber_cache` und die GPU, und
+  ein Absturz lässt das Meeting für immer auf `status="processing"` stehen.
+  Die Queue repariert alle drei Punkte und ist die Voraussetzung für Batch.
+  Dazu ein LRU-Deckel auf `_transcriber_cache` (heute unbegrenzt — fällt auf,
+  sobald die UI Modelle wählen lässt).
+- **Danach:** Ordner-Import · Sprache/Modell/Diarization-Schalter im
+  Import-UI (die Parameter existieren in `import_file` bereits, sie werden
+  nur nicht durchgereicht) · SRT/VTT/DOCX aus `words_json` · ID3-Tags für
+  Titel und Datum (PyAV liefert sie mit, keine neue Dependency).
+- **Phase-1-Rest:** `speaker.sample` fehlt — beim Sprecher-Umbenennen soll
+  man eine 5-Sekunden-Hörprobe hören. Rename und Merge sind in
+  `SpeakerList.tsx` fertig, das Snippet nicht (weder RPC-Methode noch
+  `<audio>`-Element). Bei fremden Aufnahmen wichtiger als bei eigenen.
+- **`methods.py` aufteilen**, sobald das zweite Exportformat kommt: die
+  Markdown-Formatierung gehört in ein `exporters/`-Modul, nicht neben die
+  RPC-Wrapper.
 - **Zwei Logdateien**: `core/log.py` schreibt `%APPDATA%\Blitztext\blitztext.log`,
   der Sidecar per stdlib-`logging` nach `sidecar.log`. Zusammenlegen wäre
   sinnvoll, ist aber eine eigene Aufgabe.
@@ -159,30 +179,25 @@ erkennt „kein id" und macht `app.emit("sidecar-event", …)` → im Frontend
 Rust ist bewusst dumm (~250 LOC Transport, null Domänenlogik). Neue Features
 gehören nach Python; Rust nur anfassen für Fenster, Shortcuts, Prozess-Handling.
 
-Fachliche Trennung im Sidecar, die man kennen muss:
-- `dictate.py` — kurze Diktate, **keine** DB, `medium`-Whisper, Text landet per
-  `core/injector.py` (Clipboard + Strg+V) im aktiven Fremdfenster.
-- `recording.py` / `meeting_pipeline.py` — Meetings, **mit** DB. Fünf Stages
-  (decode 5 % → transcribe 55 % → diarize 30 % → merge 5 % → persist 5 %),
-  Gewichte stehen in `_STAGES` und ergeben die eine Prozentzahl der UI.
+Was man über die Pipeline wissen muss:
+- `meeting_pipeline.py` — fünf Stages (decode 5 % → transcribe 55 % →
+  diarize 30 % → merge 5 % → persist 5 %), Gewichte stehen in `_STAGES` und
+  ergeben die eine Prozentzahl der UI. Jeder Import läuft hier durch.
 - Diarization ist **best effort**: fällt pyannote aus (Token, Lizenz, CUDA),
   läuft der Import mit leerer Segmentliste weiter → ein Sprecher, Split an
   langen Pausen, `meeting.warning`-Event statt Abbruch.
 - Persistenz: SQLite unter `%APPDATA%\Blitztext\meetings.db` (3 Tabellen —
   `meetings`/`speakers`/`turns`, Sprecher-Statistiken denormalisiert), Audio je
-  Meeting unter `%APPDATA%\Blitztext\meetings\<uuid>\`. `schema_version` = 1,
-  kein Migrations-Framework — Schema-Änderungen brauchen einen Handschritt.
+  Meeting unter `%APPDATA%\Blitztext\meetings\<uuid>\`. Migrationen siehe
+  `_MIGRATIONS` in `meeting_store.py`.
 
 ## Zentrale Bausteine
 
-- `merge()` (`sidecar/merger.py`) — Kern der Meeting-Pipeline: Word-Timestamps +
-  Speaker-Segmente → Turns. Die anspruchsvollste Logik im Projekt.
+- `merge()` (`sidecar/merger.py`) — Word-Timestamps + Speaker-Segmente → Turns.
+  Die anspruchsvollste Logik im Projekt.
 - `run_stages()` (`sidecar/meeting_pipeline.py`) — die fünf Stages; jeder
-  Import- und Aufnahme-Weg läuft hier durch.
-- `Transcriber` (`core/transcription.py`) — faster-whisper-Wrapper, von Meeting
-  **und** Dictate benutzt.
-- `AudioRecorder` (`core/audio.py`) — Mikrofon-Aufnahme, von `recording.py`
-  und `dictate.py` benutzt.
+  Import läuft hier durch.
+- `Transcriber` (`core/transcription.py`) — faster-whisper-Wrapper.
 - `_connect()` (`sidecar/meeting_store.py`) — SQLite-Zugang; einzige Verbindung,
   bewusst modulglobal (Single-Prozess-Modell).
 - `cleanup_turn()` (`core/llm.py`) — einziger LLM-Aufruf im Produkt.
@@ -191,17 +206,14 @@ Fachliche Trennung im Sidecar, die man kennen muss:
 
 ## Datei-Landkarte
 
-**Python-Kern** (`core/` — von Meeting- und Dictate-Pfad geteilt):
-`audio.py` (Mikrofon), `transcription.py` (Whisper), `llm.py` (Ollama-Cleanup),
-`injector.py` (Text ins Fremdfenster), `log.py`. Mehr ist nicht drin — alles
-Übrige gehörte zum Tray und ist weg.
+**Python-Kern** (`core/`): `transcription.py` (Whisper), `llm.py`
+(Ollama-Cleanup), `log.py`. Mehr ist nicht drin.
 
 **Sidecar** (`sidecar/` — das Backend):
 - `rpc.py` + `methods.py` — JSON-RPC-Dispatcher + Methoden; Contract in
   `rpc_schema.md`.
 - `meeting_pipeline.py`, `diarization.py`, `merger.py`, `meeting_store.py`,
-  `audio_io.py` — Meeting-Pipeline (Import → Whisper+pyannote → Turns → SQLite).
-- `dictate.py`, `recording.py` — Diktat-Flow / Live-Aufnahme.
+  `audio_io.py` — die Pipeline (Datei → Whisper+pyannote → Turns → SQLite).
 
 **Tests** (`tests/`, pytest): `conftest.py` (isolierte DB je Test, Opt-in-Flags),
 `test_merger.py`, `test_store.py`, `test_migrations.py`, `test_export.py`,
@@ -209,11 +221,12 @@ Fachliche Trennung im Sidecar, die man kennen muss:
 `test_cleanup.py` (`--ollama`).
 
 **Tauri-App** (`app/`):
-- `src/` — React: `App.tsx`, `MiniWidget.tsx`, Views (`MeetingImport`,
-  `MeetingReview`, `Library`, `Settings`), Store `state/useMeetingStore.ts`,
-  RPC-Client `lib/rpc.ts`, Typ-Spiegel `lib/types.ts`.
-- `src-tauri/` — Rust-Shell: `lib.rs` (Shortcuts), `sidecar.rs`, `commands.rs`,
-  `capabilities/` (Permissions), `tauri.conf.json`.
+- `src/` — React: `App.tsx`, Views (`MeetingImport`, `MeetingReview`,
+  `Library`, `Settings`), Store `state/useMeetingStore.ts`, RPC-Client
+  `lib/rpc.ts`, Typ-Spiegel `lib/types.ts`.
+- `src-tauri/` — Rust-Shell: `lib.rs` (Fenster + Sidecar-Start), `sidecar.rs`,
+  `commands.rs`, `capabilities/` (Permissions), `tauri.conf.json`.
+  Ein Fenster, keine globalen Shortcuts.
 
 **Werkzeug & Doku:**
 - `transcribe.py` — CLI: eine Audiodatei durch die volle Pipeline → Markdown.
@@ -224,9 +237,6 @@ Fachliche Trennung im Sidecar, die man kennen muss:
 
 ## Stolpersteine
 
-- **`core/` ist geteilte Basis** von Meeting- und Dictate-Pfad: `AudioRecorder`
-  und `Transcriber` werden von `recording.py`, `meeting_pipeline.py` **und**
-  `dictate.py` benutzt. Änderungen dort treffen beide Modi.
 - **venv nach Ordner-Umzug immer neu bauen** (absolute Pfade eingebacken);
   Install-Befehl siehe Konventionen.
 - **`binaries/sidecar/` darf nie leer sein** — sonst scheitert jeder Rust-Build
@@ -268,6 +278,24 @@ Fachliche Trennung im Sidecar, die man kennen muss:
 
 ## Änderungslog
 
+- 2026-07-23 — **Fokus: nur noch Datei-Transkription.** Entscheidung von
+  Julius, radikale Variante. Entfernt: `sidecar/dictate.py`,
+  `sidecar/recording.py`, `core/audio.py`, `core/injector.py`,
+  `MiniWidget.tsx`, das Mini-Fenster, alle globalen Shortcuts samt
+  `tauri-plugin-global-shortcut`, die elf `recording.*`/`dictate.*`-RPCs und
+  die Deps `sounddevice`/`pyautogui`/`pyperclip`. Die App fordert **kein
+  Mikrofonrecht** mehr an. UI-Texte nachgezogen („Meeting Mode" →
+  „Transkription", „Neues Meeting" → „Datei transkribieren", „Aufnahmen" →
+  „Transkripte"). Verifiziert: 36 Tests, Lint, Build, `cargo check`,
+  Sidecar-`ping` — alle grün.
+- 2026-07-23 — **Fundament für den Ausbau: pytest + echte Migrationen**
+  (`db3160e`). 36 Tests in ~1 s ohne Modelle/Ollama/Netz, teure Läufe hinter
+  `--slow`/`--ollama`; `_MIGRATIONS` gleicht `PRAGMA user_version` ab, statt
+  ihn nur zu stempeln. Zwei Fehler dabei gefunden: `list_meetings` war bei
+  gleichem `created_at` beliebig sortiert (jetzt `rowid DESC` als zweiter
+  Schlüssel), und `_smoke_e2e` prüfte ein Feld, das `cleanup.run` seit der
+  Async-Umstellung nicht mehr zurückgibt — der Test wäre immer durchgefallen,
+  wurde aber nie gestartet.
 - 2026-07-23 — **Große Aufräumrunde in fünf Stufen** (vier Commits, `7a3babe`
   bis Doku). Anlass: das Repo trug zwei Produkte parallel, bevor die
   Spezialisierung auf MP3-Transkription beginnt.

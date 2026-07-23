@@ -24,25 +24,6 @@
         "transparent": false,
         "shadow": true,
         "visible": false
-      },
-      {
-        "label": "mini",
-        "title": "Blitztext Mini",
-        "url": "/?widget=mini",
-        "width": 420,
-        "height": 240,
-        "minWidth": 420,
-        "minHeight": 240,
-        "maxWidth": 420,
-        "maxHeight": 240,
-        "resizable": false,
-        "decorations": false,
-        "transparent": true,
-        "shadow": false,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "visible": false,
-        "focus": false
       }
     ],
     "security": {

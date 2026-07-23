@@ -1,8 +1,8 @@
 # Blitztext
 
-Lokaler Speech-to-Text-Desktop für Windows. Meeting-Transkription mit
-Sprecher-Diarization und LLM-Cleanup, dazu Diktieren per globalem Hotkey.
-Alles on-device — kein Cloud-Dienst, keine offenen Ports.
+Transkribiert Audiodateien lokal auf Windows — MP3, WAV, M4A, FLAC, OGG.
+Mit Sprecher-Trennung, optionalem LLM-Cleanup und Markdown-Export.
+Alles on-device: kein Cloud-Dienst, keine offenen Ports, kein Mikrofonzugriff.
 
 ## Repository-Struktur
 
@@ -10,13 +10,16 @@ Alles on-device — kein Cloud-Dienst, keine offenen Ports.
 |---|---|
 | `app/` | Tauri 2 + React + TypeScript. Die Desktop-App; spawnt den Sidecar als Child-Prozess. |
 | `sidecar/` | Python-Backend. JSON-RPC 2.0 über stdin/stdout, siehe `sidecar/rpc_schema.md`. Besitzt die SQLite-DB. |
-| `core/` | Geteilte Bausteine: Mikrofon (`audio.py`), Whisper (`transcription.py`), Ollama (`llm.py`), Text-Injektion (`injector.py`), Log. |
+| `core/` | Geteilte Bausteine: Whisper (`transcription.py`), Ollama-Cleanup (`llm.py`), Log. |
+| `tests/` | pytest — siehe unten. |
 | `transcribe.py` | CLI: eine Audiodatei durch die volle Pipeline → Markdown. Ohne GUI. |
-| `PLAN.md` | Roadmap des Umbaus (Phase 0 Setup → Phase 1 Meeting-MVP → Phase 2 Dictate-Migration). |
+| `PLAN.md` | Roadmap des Umbaus. Phase 2 (Dictate-Migration) ist mit der Fokussierung hinfällig. |
 | `BUILD.md` | Release-Prozess (PyInstaller-Sidecar + Tauri-MSI). |
 
-Der PyQt-Tray (v1.0.25) wurde am 2026-07-23 entfernt; er liegt unverändert auf
-Branch `main` und in der Historie.
+Zwei Rückbauten am 2026-07-23, beide in der Historie erhalten: der PyQt-Tray
+(v1.0.25, liegt unverändert auf Branch `main`) und die Mikrofon-Funktionen
+(Diktat per Hotkey, Live-Mitschnitt). Blitztext ist seither ein reines
+Datei-Werkzeug.
 
 ## Voraussetzungen
 

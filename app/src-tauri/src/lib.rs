@@ -2,26 +2,13 @@ mod commands;
 mod sidecar;
 
 use sidecar::SidecarHandle;
-use tauri::{Emitter, Manager};
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, shortcut, event| {
-                    // Only fire on key-press, not key-release.
-                    if event.state() != ShortcutState::Pressed {
-                        return;
-                    }
-                    log::info!("global shortcut: {shortcut:?}");
-                    handle_global_shortcut(app, shortcut);
-                })
-                .build(),
-        )
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -45,10 +32,6 @@ pub fn run() {
                 }
             }
 
-            // Register the OS-wide shortcuts. Failure here is non-fatal —
-            // the user can still use the app via the window UI.
-            register_global_shortcuts(app.handle());
-
             // Show the main window now that the sidecar is up. We start
             // hidden in tauri.conf.json to avoid the brief unstyled flash
             // before the React app mounts.
@@ -62,96 +45,4 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![commands::rpc])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-// --- Global shortcuts ------------------------------------------------------
-//
-// Shortcut::new is not a const fn, so we build the values on demand and
-// match incoming presses against the same constructor calls.
-
-fn toggle_recording_shortcut() -> Shortcut {
-    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space)
-}
-
-fn show_library_shortcut() -> Shortcut {
-    Shortcut::new(Some(Modifiers::CONTROL), Code::KeyO)
-}
-
-/// Toggle dictate-mode. CTRL+ALT+1 matches the legacy Blitztext binding
-/// so users coming from the old tray app keep their muscle memory; the
-/// digit-row also doesn't collide with the meeting Ctrl+Shift+Space.
-fn toggle_dictate_shortcut() -> Shortcut {
-    Shortcut::new(
-        Some(Modifiers::CONTROL | Modifiers::ALT),
-        Code::Digit1,
-    )
-}
-
-fn register_global_shortcuts<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    let manager = app.global_shortcut();
-    for sc in [
-        toggle_recording_shortcut(),
-        show_library_shortcut(),
-        toggle_dictate_shortcut(),
-    ] {
-        if let Err(e) = manager.register(sc) {
-            log::warn!("failed to register shortcut {sc:?}: {e}");
-        }
-    }
-}
-
-fn handle_global_shortcut<R: tauri::Runtime>(app: &tauri::AppHandle<R>, sc: &Shortcut) {
-    if *sc == show_library_shortcut() {
-        bring_main_to_front(app);
-        return;
-    }
-    if *sc == toggle_recording_shortcut() {
-        // Toggle the mini-widget window visibility. The widget owns the
-        // start/stop logic via recording.* RPCs; this just gives the user
-        // a fast way to summon (or dismiss) it from anywhere in the OS.
-        toggle_mini_widget(app);
-        if let Err(e) = app.emit(
-            "bt://shortcut",
-            serde_json::json!({"action": "toggle_recording"}),
-        ) {
-            log::warn!("failed to emit shortcut event: {e}");
-        }
-        return;
-    }
-    if *sc == toggle_dictate_shortcut() {
-        // Toggle dictate flow. The frontend doesn't even need to be
-        // visible — App.tsx listens for this and dispatches dictate.start
-        // / dictate.stop directly to the sidecar.
-        if let Err(e) = app.emit(
-            "bt://shortcut",
-            serde_json::json!({"action": "toggle_dictate"}),
-        ) {
-            log::warn!("failed to emit dictate shortcut event: {e}");
-        }
-    }
-}
-
-fn toggle_mini_widget<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    let Some(mini) = app.get_webview_window("mini") else {
-        log::warn!("mini window not found");
-        return;
-    };
-    match mini.is_visible() {
-        Ok(true) => {
-            let _ = mini.hide();
-        }
-        Ok(false) => {
-            let _ = mini.show();
-            let _ = mini.set_focus();
-        }
-        Err(e) => log::warn!("mini visibility check failed: {e}"),
-    }
-}
-
-fn bring_main_to_front<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
-    }
 }

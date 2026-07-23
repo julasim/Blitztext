@@ -7,8 +7,7 @@ der lokale Pfad. Wer die alten Provider braucht, findet sie in der Historie
 (Branch ``main``, vor dem Aufräumen 2026-07-23).
 
 Einziger Konsument: ``cleanup_turn`` — Füllwörter-Bereinigung eines
-Sprecher-Turns, aufgerufen aus ``sidecar/methods.py`` (cleanup.run) und
-``sidecar/dictate.py``.
+Sprecher-Turns, aufgerufen aus ``sidecar/methods.py`` (cleanup.run).
 """
 
 import httpx

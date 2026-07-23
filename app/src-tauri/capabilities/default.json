@@ -1,10 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the main Blitztext window: core, file dialogs, global shortcuts, notifications. Kein fs/shell — Dateien fasst nur der Python-Sidecar an, gespawnt über std::process::Command.",
+  "description": "Rechte des Hauptfensters: Fenstersteuerung, Dateidialoge, Benachrichtigungen. Kein fs/shell — Dateien fasst ausschließlich der Python-Sidecar an, gespawnt über std::process::Command. Keine globalen Shortcuts, kein Mikrofon.",
   "windows": [
-    "main",
-    "mini"
+    "main"
   ],
   "permissions": [
     "core:default",
@@ -20,7 +19,6 @@
     "dialog:allow-confirm",
     "dialog:allow-ask",
     "dialog:allow-message",
-    "global-shortcut:default",
     "notification:default"
   ]
 }

@@ -178,8 +178,9 @@ def run_stages(
         # Copy source next to the meeting folder for later replay / speaker
         # preview. We keep the original container, not the resampled WAV —
         # loses less info if the user ever re-exports.
-        # Skip when the audio is ALREADY in the meeting folder (live
-        # recording writes source.wav directly via recording.py).
+        # Der same-Zweig fängt den Fall ab, dass die Quelle bereits im
+        # Meeting-Ordner liegt — das ist der Weg für ein künftiges
+        # meeting.reprocess, das gegen die schon kopierte Datei läuft.
         folder = meeting_store.meeting_folder(meeting_id)
         source_copy = folder / f"source{src.suffix.lower()}"
         try:

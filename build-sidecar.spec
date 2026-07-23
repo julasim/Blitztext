@@ -51,7 +51,6 @@ for pkg in (
     "transformers",
     "tokenizers",
     "soundfile",
-    "sounddevice",
     "av",  # PyAV
     "scipy",
     "sklearn",
@@ -90,16 +89,12 @@ hiddenimports.extend(
 # --- Project deps ---------------------------------------------------------
 hiddenimports.extend(
     [
-        "core.audio",
         "core.transcription",
         "core.llm",
-        "core.injector",
         "core.log",
         "sidecar",
         "sidecar.rpc",
         "sidecar.methods",
-        "sidecar.recording",
-        "sidecar.dictate",
         "sidecar.diarization",
         "sidecar.merger",
         "sidecar.meeting_pipeline",

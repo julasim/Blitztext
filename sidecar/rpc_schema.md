@@ -7,6 +7,11 @@ Transport: line-delimited JSON-RPC 2.0 over stdin/stdout of the sidecar process.
 > Stand 2026-07-23 — vollständig gegen `methods.py` abgeglichen. Wer eine
 > Methode ergänzt, pflegt sie hier mit; das Dokument war schon einmal drei
 > Namensräume hinterher.
+>
+> Die Namensräume `recording.*` (Mikrofon-Mitschnitt) und `dictate.*`
+> (Hotkey-Diktat) sind am 2026-07-23 entfallen — die App transkribiert
+> ausschließlich Dateien. Beide liegen in der Historie, letzter Stand vor
+> Commit „Fokus: nur noch Datei-Transkription".
 
 ## Conventions
 
@@ -58,27 +63,6 @@ Transport: line-delimited JSON-RPC 2.0 over stdin/stdout of the sidecar process.
 | ✅ | `cleanup.run` | `{meeting_id, model?}` | `{ok, started, total}` — **async**; idempotent, bereits bereinigte Turns werden übersprungen |
 | ✅ | `export.markdown` | `{meeting_id, path, use_cleanup=false}` | `{ok, bytes, path}` |
 
-### Live-Recording (Mikrofon → Meeting)
-
-| Status | Method | Request | Response |
-|---|---|---|---|
-| ✅ | `recording.start` | `{title?, language="de", whisper_model?}` | `{ok, meeting_id, title}` |
-| ✅ | `recording.stop` | — | `{ok, meeting_id, duration_ms}` — schreibt WAV, übergibt an die Offline-Pipeline |
-| ✅ | `recording.pause` | — | `{ok, meeting_id}` |
-| ✅ | `recording.resume` | — | `{ok, meeting_id}` |
-| ✅ | `recording.cancel` | — | `{ok, meeting_id}` / `{ok: false, reason}` — verwirft Meeting **und** Audio |
-| ✅ | `recording.state` | — | `{is_recording, is_paused, meeting_id, title, language, whisper_model}` |
-
-### Dictate (Hotkey-Diktat, keine DB)
-
-| Status | Method | Request | Response |
-|---|---|---|---|
-| ✅ | `dictate.start` | `{cleanup=false}` | `{ok}` |
-| ✅ | `dictate.stop` | — | `{ok, samples}` — **async**: transkribiert, optional Cleanup, fügt in das aktive Fremdfenster ein |
-| ✅ | `dictate.cancel` | — | `{ok}` / `{ok: false, reason}` |
-| ✅ | `dictate.toggle` | `{cleanup=false}` | wie start/stop, plus `{transition: "start" \| "stop"}` — was der globale Shortcut aufruft |
-| ✅ | `dictate.state` | — | `{is_recording}` |
-
 ### Settings
 
 | Status | Method | Request | Response |
@@ -101,13 +85,6 @@ Der HF-Token liegt im Windows-Anmeldeinformationsmanager (`keyring`, Dienst
 | `cleanup.progress` | `{meeting_id, processed, skipped, total, turn_id}` |
 | `cleanup.done` | `{meeting_id, processed, skipped, total}` |
 | `cleanup.error` | `{meeting_id, turn_id?, message}` — pro Turn, bricht den Lauf **nicht** ab |
-| `recording.started` | `{meeting_id, title}` |
-| `recording.stopped` | `{meeting_id, duration_ms}` |
-| `recording.paused` / `recording.resumed` / `recording.cancelled` | `{meeting_id}` |
-| `dictate.started` / `dictate.cancelled` / `dictate.transcribing` | `{}` |
-| `dictate.stopped` | `{samples}` |
-| `dictate.done` | `{text, injected, reason?}` — `reason: "empty_transcript"`, wenn nichts erkannt wurde |
-| `dictate.error` | `{stage, message, text?}` — `stage ∈ {transcribe, inject}` |
 
 Auf der Rust-Seite werden alle Notifications als `window.emit("sidecar-event",
 {event, params})` weitergereicht; das Frontend filtert mit `onEvent(name, …)`
@@ -143,7 +120,7 @@ type MeetingListItem = {
   title: string
   duration_ms: number
   created_at: string
-  status: 'recording' | 'processing' | 'ready' | 'error'
+  status: 'processing' | 'ready' | 'error'
 }
 
 type MeetingFull = MeetingListItem & {
