@@ -7,7 +7,7 @@
 
 import { create } from "zustand";
 import { call, onEvent } from "../lib/rpc";
-import type { MeetingFull, MeetingListItem } from "../lib/types";
+import type { Job, MeetingFull, MeetingListItem } from "../lib/types";
 
 export type ProgressInfo = {
   stage: "decode" | "transcribe" | "diarize" | "merge" | "persist";
@@ -38,6 +38,8 @@ type Config = {
   cuda_available: boolean;
   ollama_available: boolean;
   whisper_models: string[];
+  /** Vom Sidecar gepflegt — der Dateidialog führt keine eigene Liste. */
+  audio_extensions: string[];
 };
 
 export type State = {
@@ -78,12 +80,22 @@ export type State = {
   useCleanup: boolean;
   setUseCleanup: (v: boolean) => void;
 
+  // Import-Warteschlange. Die DB im Sidecar ist die Wahrheit; wir laden
+  // die Liste neu, sobald ein queue.*-Event kommt, statt lokal mitzuzählen.
+  jobs: Job[];
+  loadJobs: () => Promise<void>;
+  enqueue: (paths: string[]) => Promise<{ count: number; skipped: SkippedPath[] }>;
+  cancelJob: (jobId: string) => Promise<void>;
+  clearFinishedJobs: () => Promise<void>;
+
   // Per-meeting pipeline progress (keyed by meeting_id). Populated by
   // sidecar-event subscriptions — see wireSidecarEvents().
   progress: Record<string, ProgressInfo>;
   importErrors: Record<string, string>;
   wireSidecarEvents: () => Promise<() => void>;
 };
+
+export type SkippedPath = { path: string; reason: string };
 
 export const useMeetingStore = create<State>((set, get) => ({
   view: { name: "library" },
@@ -209,6 +221,32 @@ export const useMeetingStore = create<State>((set, get) => ({
   useCleanup: false,
   setUseCleanup: (v) => set({ useCleanup: v }),
 
+  jobs: [],
+  async loadJobs() {
+    try {
+      const list = await call<Job[]>("queue.list", { limit: 200 });
+      set({ jobs: list });
+    } catch (e) {
+      console.warn("[queue.list] failed:", e);
+    }
+  },
+  async enqueue(paths) {
+    const res = await call<{ count: number; skipped: SkippedPath[] }>(
+      "queue.enqueue",
+      { paths },
+    );
+    await Promise.all([get().loadJobs(), get().loadMeetings()]);
+    return res;
+  },
+  async cancelJob(jobId) {
+    await call("queue.cancel", { job_id: jobId });
+    await Promise.all([get().loadJobs(), get().loadMeetings()]);
+  },
+  async clearFinishedJobs() {
+    await call("queue.clear_finished");
+    await get().loadJobs();
+  },
+
   progress: {},
   importErrors: {},
   async wireSidecarEvents() {
@@ -266,12 +304,29 @@ export const useMeetingStore = create<State>((set, get) => ({
         cleanupError: p.message,
       });
     });
+    // Warteschlange: jede Änderung im Sidecar → Liste neu holen. Das ist
+    // ein RPC pro Zustandswechsel und damit billig; lokales Mitzählen
+    // würde bei Abbruch und Wiederanlauf zwangsläufig auseinanderlaufen.
+    const offQueueChanged = await onEvent("queue.changed", () => {
+      void get().loadJobs();
+    });
+    const offQueueFinished = await Promise.all(
+      ["queue.job_done", "queue.job_failed", "queue.job_cancelled"].map((name) =>
+        onEvent(name, () => {
+          void get().loadJobs();
+          void get().loadMeetings();
+        }),
+      ),
+    );
+
     return () => {
       offProgress();
       offDone();
       offError();
       offCleanupDone();
       offCleanupError();
+      offQueueChanged();
+      for (const off of offQueueFinished) off();
     };
   },
 }));

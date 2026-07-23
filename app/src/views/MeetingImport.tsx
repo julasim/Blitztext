@@ -1,60 +1,60 @@
-// Drag & drop zone + file-picker fallback.
+// Drop-Zone + Dateidialog für den Stapel-Import.
 //
-// `meeting.import_file` kehrt sofort mit der meeting_id zurück und arbeitet
-// im Worker-Thread weiter — deshalb springen wir direkt in die Review-Ansicht,
-// die den Fortschritt aus den meeting.progress-Events zeichnet.
+// Mehrere Dateien und ganze Ordner sind erlaubt; aufgelöst wird serverseitig
+// (`queue.enqueue` → `audio_io.expand_paths`), weil das Frontend seit dem
+// Entfernen des fs-Plugins bewusst nicht ins Dateisystem schaut. Die
+// akzeptierten Endungen kommen aus `config.get`, damit es nur eine Liste gibt.
 //
-// Aktuell genau eine Datei pro Vorgang: der Dialog steht auf multiple:false,
-// und der Drop nimmt nur den ersten passenden Pfad. Für Batch-Import braucht
-// es zuerst eine serielle Queue im Sidecar — zwei gleichzeitige Importe
-// würden sich denselben Whisper-Cache und die GPU teilen.
+// Der Import selbst läuft über die Warteschlange: ein Job nach dem anderen,
+// Fortschritt in der Seitenleiste.
 
-import { Upload, FileAudio, X } from "lucide-react";
-import { useEffect, useState } from "react";
-import { call } from "../lib/rpc";
-import { useMeetingStore } from "../state/useMeetingStore";
+import { FileAudio, Upload, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useMeetingStore, type SkippedPath } from "../state/useMeetingStore";
 
-const ACCEPTED = [".wav", ".mp3", ".m4a", ".flac", ".ogg", ".mp4"];
-
-function isAcceptedAudio(path: string): boolean {
-  const lower = path.toLowerCase();
-  return ACCEPTED.some((ext) => lower.endsWith(ext));
-}
+const FALLBACK_EXTENSIONS = [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".mp4"];
 
 export function MeetingImport() {
   const goLibrary = useMeetingStore((s) => s.goLibrary);
-  const goReview = useMeetingStore((s) => s.goReview);
-  const loadMeetings = useMeetingStore((s) => s.loadMeetings);
+  const enqueue = useMeetingStore((s) => s.enqueue);
+  const config = useMeetingStore((s) => s.config);
+
   const [hover, setHover] = useState(false);
-  const [path, setPath] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
+  const [paths, setPaths] = useState<string[]>([]);
   const [state, setState] = useState<"idle" | "submitting" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [skipped, setSkipped] = useState<SkippedPath[]>([]);
 
-  // Wire Tauri 2's native drag-drop event. The HTML5 dataTransfer API
-  // does not expose actual file paths inside Tauri's webview (security),
-  // so we have to listen to tauri://drag-drop on the window.
+  const extensions = useMemo(
+    () => config?.audio_extensions ?? FALLBACK_EXTENSIONS,
+    [config],
+  );
+
+  const addPaths = (incoming: string[]) => {
+    setSkipped([]);
+    setPaths((current) => {
+      const merged = new Set(current);
+      for (const p of incoming) merged.add(p);
+      return [...merged];
+    });
+  };
+
+  // Tauri 2 gibt Dateipfade nicht über die HTML5-dataTransfer-API heraus
+  // (Sandbox), deshalb der native Fenster-Event. Ordner kommen hier als
+  // ganz normaler Pfad an — auflösen tut sie der Sidecar.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     (async () => {
       try {
         const { getCurrentWebview } = await import("@tauri-apps/api/webview");
-        const wv = getCurrentWebview();
-        unlisten = await wv.onDragDropEvent((evt) => {
-          // event payload is { type: "enter" | "over" | "leave" | "drop", paths?: string[] }
+        unlisten = await getCurrentWebview().onDragDropEvent((evt) => {
           if (evt.payload.type === "enter" || evt.payload.type === "over") {
             setHover(true);
           } else if (evt.payload.type === "leave") {
             setHover(false);
           } else if (evt.payload.type === "drop") {
             setHover(false);
-            const paths = evt.payload.paths;
-            const first = paths.find(isAcceptedAudio);
-            if (first) {
-              setPath(first);
-              const base = first.split(/[\\/]/).pop() || "";
-              setTitle((t) => t || base.replace(/\.[^.]+$/, ""));
-            }
+            addPaths(evt.payload.paths);
           }
         });
       } catch (e) {
@@ -70,37 +70,44 @@ export function MeetingImport() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({
-        multiple: false,
+        multiple: true,
         filters: [
-          {
-            name: "Audio",
-            extensions: ACCEPTED.map((e) => e.slice(1)),
-          },
+          { name: "Audio", extensions: extensions.map((e) => e.replace(/^\./, "")) },
         ],
       });
-      if (typeof selected === "string") {
-        setPath(selected);
-        if (!title) {
-          const base = selected.split(/[\\/]/).pop() || "";
-          setTitle(base.replace(/\.[^.]+$/, ""));
-        }
-      }
+      if (Array.isArray(selected)) addPaths(selected);
+      else if (typeof selected === "string") addPaths([selected]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const pickFolder = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ directory: true, multiple: false });
+      if (typeof selected === "string") addPaths([selected]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
 
   const submit = async () => {
-    if (!path) return;
+    if (paths.length === 0) return;
     setState("submitting");
     setError(null);
     try {
-      const res = await call<{ meeting_id: string }>("meeting.import_file", {
-        path,
-        title: title || undefined,
-      });
-      await loadMeetings();
-      goReview(res.meeting_id);
+      const res = await enqueue(paths);
+      if (res.count === 0) {
+        setState("error");
+        setSkipped(res.skipped);
+        setError("Nichts eingereiht — keine verwertbare Audiodatei dabei.");
+        return;
+      }
+      setSkipped(res.skipped);
+      setPaths([]);
+      setState("idle");
+      goLibrary();
     } catch (e) {
       setState("error");
       setError(e instanceof Error ? e.message : String(e));
@@ -116,6 +123,7 @@ export function MeetingImport() {
         alignItems: "center",
         padding: 48,
         gap: 20,
+        overflowY: "auto",
         background: "var(--bt-white)",
       }}
     >
@@ -129,7 +137,7 @@ export function MeetingImport() {
           }}
         >
           <h2 style={{ fontSize: "var(--fs-xl)", fontWeight: 600 }}>
-            Meeting importieren
+            Dateien transkribieren
           </h2>
           <button
             type="button"
@@ -143,40 +151,14 @@ export function MeetingImport() {
 
         <Dropzone
           hover={hover}
-          path={path}
-          onClear={() => setPath(null)}
+          count={paths.length}
+          extensions={extensions}
           onPick={pick}
+          onPickFolder={pickFolder}
         />
 
-        {path && (
-          <div style={{ marginTop: 20 }}>
-            <label
-              style={{
-                display: "block",
-                fontSize: "var(--fs-xs)",
-                textTransform: "uppercase",
-                fontWeight: 600,
-                letterSpacing: "0.08em",
-                color: "var(--bt-muted-2)",
-                marginBottom: 6,
-              }}
-            >
-              Titel
-            </label>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Kurzer Meeting-Titel"
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                border: "1px solid var(--bt-line)",
-                borderRadius: "var(--radius-lg)",
-                fontSize: "var(--fs-base)",
-              }}
-            />
-          </div>
+        {paths.length > 0 && (
+          <PathList paths={paths} onRemove={(p) => setPaths((c) => c.filter((x) => x !== p))} />
         )}
 
         {error && (
@@ -196,6 +178,8 @@ export function MeetingImport() {
             {error}
           </div>
         )}
+
+        {skipped.length > 0 && <SkippedList skipped={skipped} />}
 
         <div
           style={{
@@ -220,7 +204,7 @@ export function MeetingImport() {
           </button>
           <button
             type="button"
-            disabled={!path || state === "submitting"}
+            disabled={paths.length === 0 || state === "submitting"}
             onClick={submit}
             style={{
               padding: "10px 20px",
@@ -228,10 +212,14 @@ export function MeetingImport() {
               background: "var(--bt-ink)",
               color: "var(--bt-white)",
               fontWeight: 500,
-              opacity: !path || state === "submitting" ? 0.5 : 1,
+              opacity: paths.length === 0 || state === "submitting" ? 0.5 : 1,
             }}
           >
-            {state === "submitting" ? "Starte…" : "Transkribieren"}
+            {state === "submitting"
+              ? "Reihe ein…"
+              : paths.length > 1
+                ? `${paths.length} Einträge einreihen`
+                : "Transkribieren"}
           </button>
         </div>
 
@@ -243,9 +231,9 @@ export function MeetingImport() {
             lineHeight: 1.6,
           }}
         >
-          Die Transkription läuft lokal. Je nach Meeting-Länge und GPU
-          dauert der Vorgang 1–10 Minuten. Fortschritt erscheint dann
-          automatisch im Review-Bereich.
+          Die Transkription läuft lokal und nacheinander — eine Datei nach der
+          anderen, damit sich zwei Läufe nicht die Grafikkarte streitig machen.
+          Der Fortschritt steht in der Seitenleiste, abbrechen geht dort auch.
         </p>
       </div>
     </div>
@@ -254,18 +242,17 @@ export function MeetingImport() {
 
 function Dropzone({
   hover,
-  path,
-  onClear,
+  count,
+  extensions,
   onPick,
+  onPickFolder,
 }: {
   hover: boolean;
-  path: string | null;
-  onClear: () => void;
+  count: number;
+  extensions: string[];
   onPick: () => void;
+  onPickFolder: () => void;
 }) {
-  // No HTML5 drop handler — Tauri 2's webview doesn't expose file paths
-  // through dataTransfer. The actual drop is handled by the page-level
-  // tauri://drag-drop subscription in MeetingImport.
   return (
     <div
       onDragOver={(e) => e.preventDefault()}
@@ -278,84 +265,37 @@ function Dropzone({
         transition: "all 150ms ease",
       }}
     >
-      {path ? (
-        <div>
-          <div
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "8px 14px",
-              borderRadius: "var(--radius-lg)",
-              border: "1px solid var(--bt-line)",
-              background: "var(--bt-white)",
-              fontFamily: "var(--font-mono)",
-              fontSize: "var(--fs-sm)",
-            }}
-          >
-            <FileAudio size={14} />
-            <span
-              style={{
-                maxWidth: 380,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-              title={path}
-            >
-              {path}
-            </span>
-            <button
-              type="button"
-              onClick={onClear}
-              style={{
-                marginLeft: 4,
-                color: "var(--bt-muted-2)",
-                padding: 2,
-              }}
-              aria-label="Datei entfernen"
-            >
-              <X size={12} />
-            </button>
-          </div>
-        </div>
-      ) : (
+      <div
+        style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}
+      >
         <div
-          style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}
+          aria-hidden
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: "var(--radius-xl)",
+            background: "var(--bt-white)",
+            border: "1px solid var(--bt-line)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--bt-muted-2)",
+          }}
         >
-          <div
-            aria-hidden
-            style={{
-              width: 56,
-              height: 56,
-              borderRadius: "var(--radius-xl)",
-              background: "var(--bt-white)",
-              border: "1px solid var(--bt-line)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "var(--bt-muted-2)",
-            }}
-          >
-            <Upload size={22} strokeWidth={1.5} />
-          </div>
-          <div
-            style={{
-              fontSize: "var(--fs-md)",
-              fontWeight: 500,
-              color: "var(--bt-ink-soft)",
-            }}
-          >
-            Audio-Datei hier ablegen
-          </div>
-          <div
-            style={{
-              fontSize: "var(--fs-sm)",
-              color: "var(--bt-muted-2)",
-            }}
-          >
-            oder
-          </div>
+          <Upload size={22} strokeWidth={1.5} />
+        </div>
+        <div
+          style={{
+            fontSize: "var(--fs-md)",
+            fontWeight: 500,
+            color: "var(--bt-ink-soft)",
+          }}
+        >
+          {count > 0
+            ? "Weitere Dateien oder Ordner ablegen"
+            : "Dateien oder ganze Ordner hier ablegen"}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
           <button
             type="button"
             onClick={onPick}
@@ -367,18 +307,131 @@ function Dropzone({
               fontSize: "var(--fs-sm)",
             }}
           >
-            Datei auswählen…
+            Dateien wählen…
           </button>
-          <div
+          <button
+            type="button"
+            onClick={onPickFolder}
             style={{
-              marginTop: 4,
-              fontSize: "var(--fs-xs)",
-              color: "var(--bt-subtle)",
-              fontFamily: "var(--font-mono)",
+              padding: "8px 16px",
+              borderRadius: "var(--radius-lg)",
+              border: "1px solid var(--bt-line)",
+              background: "var(--bt-white)",
+              fontSize: "var(--fs-sm)",
             }}
           >
-            {ACCEPTED.join(" · ")}
+            Ordner wählen…
+          </button>
+        </div>
+        <div
+          style={{
+            marginTop: 4,
+            fontSize: "var(--fs-xs)",
+            color: "var(--bt-subtle)",
+            fontFamily: "var(--font-mono)",
+          }}
+        >
+          {extensions.slice(0, 6).join(" · ")}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PathList({
+  paths,
+  onRemove,
+}: {
+  paths: string[];
+  onRemove: (path: string) => void;
+}) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div
+        style={{
+          fontSize: "var(--fs-xs)",
+          textTransform: "uppercase",
+          fontWeight: 600,
+          letterSpacing: "0.08em",
+          color: "var(--bt-muted-2)",
+          marginBottom: 8,
+        }}
+      >
+        {paths.length} {paths.length === 1 ? "Eintrag" : "Einträge"}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
+        {paths.map((p) => (
+          <div
+            key={p}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "8px 12px",
+              borderRadius: "var(--radius-lg)",
+              border: "1px solid var(--bt-line)",
+              background: "var(--bt-white)",
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--fs-sm)",
+            }}
+          >
+            <FileAudio size={14} style={{ flexShrink: 0 }} />
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                direction: "rtl",
+                textAlign: "left",
+              }}
+              title={p}
+            >
+              {p}
+            </span>
+            <button
+              type="button"
+              onClick={() => onRemove(p)}
+              style={{ color: "var(--bt-muted-2)", padding: 2, flexShrink: 0 }}
+              aria-label="Entfernen"
+            >
+              <X size={12} />
+            </button>
           </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SkippedList({ skipped }: { skipped: SkippedPath[] }) {
+  return (
+    <div
+      style={{
+        marginTop: 16,
+        padding: "12px 14px",
+        borderRadius: "var(--radius-lg)",
+        border: "1px solid var(--bt-line)",
+        background: "var(--bt-paper)",
+        fontSize: "var(--fs-sm)",
+        lineHeight: 1.6,
+      }}
+    >
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>
+        {skipped.length} übersprungen
+      </div>
+      {skipped.slice(0, 8).map((s) => (
+        <div key={s.path + s.reason} style={{ color: "var(--bt-muted)" }}>
+          <span style={{ fontFamily: "var(--font-mono)" }}>
+            {s.path.split(/[\\/]/).pop()}
+          </span>{" "}
+          — {s.reason}
+        </div>
+      ))}
+      {skipped.length > 8 && (
+        <div style={{ color: "var(--bt-subtle)", marginTop: 4 }}>
+          … und {skipped.length - 8} weitere
         </div>
       )}
     </div>

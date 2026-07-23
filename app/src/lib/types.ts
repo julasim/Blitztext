@@ -38,6 +38,36 @@ export type MeetingListItem = {
   status: "processing" | "ready" | "error";
 };
 
+export type JobState =
+  | "queued"
+  | "running"
+  | "done"
+  | "failed"
+  | "cancelled";
+
+export type Job = {
+  id: string;
+  // null nach einem Abbruch: die leere Meeting-Hülle wird gelöscht, der
+  // Job-Eintrag bleibt als Historie stehen.
+  meeting_id: string | null;
+  source_path: string;
+  params: {
+    language: string;
+    whisper_model: string;
+    min_speakers: number | null;
+    max_speakers: number | null;
+  };
+  state: JobState;
+  position: number;
+  attempts: number;
+  error?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
+export type QueueCounts = Record<JobState, number>;
+
 export type MeetingFull = MeetingListItem & {
   audio_path: string;
   language: string;

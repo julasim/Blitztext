@@ -33,7 +33,7 @@ Transport: line-delimited JSON-RPC 2.0 over stdin/stdout of the sidecar process.
 | Status | Method | Request | Response |
 |---|---|---|---|
 | ✅ | `ping` | — | `{ok, version}` |
-| ✅ | `config.get` | — | `{appdata, models_dir, meetings_dir, db_path, cuda_available, ollama_available, whisper_models[], python_executable}` |
+| ✅ | `config.get` | — | `{appdata, models_dir, meetings_dir, db_path, cuda_available, ollama_available, whisper_models[], audio_extensions[], python_executable}` |
 
 ### Meetings
 
@@ -55,6 +55,7 @@ Der Zustand liegt in der Tabelle `jobs` und überlebt einen Absturz.
 
 | Status | Method | Request | Response |
 |---|---|---|---|
+| ✅ | `queue.enqueue` | `{paths[], language="de", whisper_model?, min_speakers?, max_speakers?}` | `{enqueued[], skipped[], count}` — nimmt Dateien **und Ordner** |
 | ✅ | `queue.list` | `{limit=200}` | `Job[]` in Abarbeitungsreihenfolge |
 | ✅ | `queue.state` | — | `{counts: {queued, running, done, failed, cancelled}, current_job_id, worker_alive}` |
 | ✅ | `queue.cancel` | `{job_id}` | `{ok, state, pending}` — bei `pending: true` läuft der Job noch und bricht am nächsten Prüfpunkt ab |
@@ -77,6 +78,12 @@ type Job = {
   finished_at?: string
 }
 ```
+
+**Ordner:** `queue.enqueue` löst Verzeichnisse **rekursiv** auf und reiht
+alphabetisch ein (`audio_io.expand_paths`). Das Frontend schaut bewusst nicht
+selbst ins Dateisystem — es hat kein fs-Plugin mehr. Was nicht verarbeitet
+werden kann, kommt als `skipped: [{path, reason}]` zurück statt still zu
+verschwinden; die erlaubten Endungen liefert `config.get` → `audio_extensions`.
 
 **Abbruch:** Ein wartender Job wird sofort verworfen. Ein laufender wird
 vorgemerkt; die Pipeline prüft an den Stage-Grenzen und nach jedem

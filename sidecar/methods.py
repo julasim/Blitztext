@@ -44,6 +44,8 @@ def _cuda_available() -> bool:
 
 @method("config.get")
 def config_get() -> dict:
+    from sidecar.audio_io import AUDIO_EXTENSIONS
+
     return {
         "appdata": str(meeting_store.appdata_dir()),
         "models_dir": str(meeting_store.appdata_dir() / "models"),
@@ -52,6 +54,8 @@ def config_get() -> dict:
         "cuda_available": _cuda_available(),
         "ollama_available": _ollama_available(),
         "whisper_models": ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"],
+        # Eine Wahrheit für Dateidialog, Drag&Drop und Ordner-Import.
+        "audio_extensions": list(AUDIO_EXTENSIONS),
         "python_executable": os.environ.get("VIRTUAL_ENV", "system"),
     }
 
@@ -160,6 +164,56 @@ def meeting_import_file(
 
 
 # --- Warteschlange ---------------------------------------------------------
+
+
+@method("queue.enqueue")
+def queue_enqueue(
+    paths: list[str],
+    language: str = "de",
+    whisper_model: str | None = None,
+    min_speakers: int | None = None,
+    max_speakers: int | None = None,
+) -> dict:
+    """Mehrere Dateien und/oder **Ordner** einreihen.
+
+    Ordner werden rekursiv aufgelöst und alphabetisch eingereiht. Was nicht
+    verarbeitet werden kann, kommt als ``skipped`` mit Begründung zurück —
+    bei 50 Dateien will man wissen, welche fehlt und warum.
+
+    Der Rest läuft wie bei ``meeting.import_file``: seriell, ein Job nach
+    dem anderen, Fortschritt über Events.
+    """
+    import logging
+
+    from sidecar.audio_io import expand_paths
+    from sidecar.jobs import JobQueue
+
+    log = logging.getLogger("sidecar.import")
+    if isinstance(paths, str):  # Bequemlichkeit für Handaufrufe
+        paths = [paths]
+
+    files, skipped = expand_paths(paths)
+    log.info("queue.enqueue: %d Pfad(e) → %d Datei(en), %d übersprungen",
+             len(paths), len(files), len(skipped))
+
+    queue = JobQueue.instance()
+    enqueued: list[dict] = []
+    for f in files:
+        try:
+            res = queue.enqueue(
+                str(f),
+                language=language,
+                whisper_model=whisper_model,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+            )
+        except Exception as e:  # noqa: BLE001 — eine Datei darf den Stapel nicht killen
+            log.exception("queue.enqueue: %s konnte nicht eingereiht werden", f)
+            skipped.append({"path": str(f), "reason": str(e)})
+            continue
+        enqueued.append({**res, "path": str(f)})
+
+    return {"enqueued": enqueued, "skipped": skipped, "count": len(enqueued)}
 
 
 @method("queue.list")

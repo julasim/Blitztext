@@ -26,6 +26,7 @@ export default function App() {
   const view = useMeetingStore((s) => s.view);
   const loadConfig = useMeetingStore((s) => s.loadConfig);
   const loadMeetings = useMeetingStore((s) => s.loadMeetings);
+  const loadJobs = useMeetingStore((s) => s.loadJobs);
   const wireSidecarEvents = useMeetingStore((s) => s.wireSidecarEvents);
 
   useEffect(() => {
@@ -37,7 +38,7 @@ export default function App() {
         if (cancelled) return;
         setBoot({ status: "ok", version: ping.version });
         unwire = await wireSidecarEvents();
-        await Promise.all([loadConfig(), loadMeetings()]);
+        await Promise.all([loadConfig(), loadMeetings(), loadJobs()]);
       } catch (e) {
         if (!cancelled) {
           setBoot({
@@ -51,7 +52,7 @@ export default function App() {
       cancelled = true;
       if (unwire) unwire();
     };
-  }, [loadConfig, loadMeetings, wireSidecarEvents]);
+  }, [loadConfig, loadMeetings, loadJobs, wireSidecarEvents]);
 
   if (boot.status === "error") {
     return (

@@ -77,11 +77,6 @@ plus CUDA-Verifikation.
   gerade benennt. Rename und Merge sind in `SpeakerList.tsx` fertig, das Snippet
   nicht — es gibt weder die RPC-Methode in `sidecar/methods.py` noch ein
   `<audio>`-Element im Popover.
-- **Die Queue hat noch keine Oberfläche.** `queue.list`, `queue.state`,
-  `queue.cancel` und `queue.clear_finished` stehen im Sidecar; das Frontend
-  ruft weiterhin nur `meeting.import_file` und sieht weder Warteschlange noch
-  Abbrechen-Knopf. Nächster sichtbarer Schritt: Mehrfachauswahl im Dialog,
-  Ordner-Drop und eine Queue-Ansicht.
 - **LRU-Deckel auf `_transcriber_cache`** (`meeting_pipeline.py`): wächst
   unbegrenzt, Schlüssel ist `modell:sprache:device`. Heute liegt genau ein
   Eintrag drin; sobald die UI Modelle wählen lässt, liegen `large-v3`,
@@ -295,6 +290,16 @@ Was man über die Pipeline wissen muss:
 
 ## Änderungslog
 
+- 2026-07-23 — **Stapel-Import sichtbar gemacht.** `queue.enqueue` nimmt
+  Dateien **und Ordner** (rekursiv, alphabetisch, mit `skipped`-Begründung je
+  aussortiertem Pfad); die Endungsliste steht einmal in `audio_io` und kommt
+  über `config.get` ins Frontend, damit der Dateidialog keine zweite pflegt.
+  Import-View auf Mehrfachauswahl, Ordnerwahl und Mehrfach-Drop umgebaut, neue
+  `QueuePanel` in der Seitenleiste (laufender Job mit Stage und Balken,
+  Wartende nummeriert, Fehlgeschlagene mit Grund, jeweils abbrechbar). Der
+  Store lädt die Liste bei jedem `queue.*`-Event neu, statt lokal
+  mitzuzählen — bei Abbruch und Wiederanlauf liefe das sonst auseinander.
+  9 neue Tests für die Pfad-Auflösung.
 - 2026-07-23 — **Import-Warteschlange** (`sidecar/jobs.py`, Migration 2).
   Ersetzt das Thread-pro-Aufruf-Modell: ein Worker arbeitet seriell ab, der
   Zustand liegt in der Tabelle `jobs`. Damit gibt es erstmals **Abbruch**

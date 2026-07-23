@@ -293,6 +293,41 @@ def test_clear_finished_raeumt_nur_abgeschlossenes(queue, store):
     assert [j["id"] for j in jobs.list_jobs()] == [wartend]
 
 
+# --- RPC: Stapel einreihen --------------------------------------------------
+
+
+def test_queue_enqueue_nimmt_ordner_und_meldet_uebersprungenes(queue, store, tmp_path):
+    """Der Weg, den der Ordner-Drop im UI nehmen wird."""
+    import sidecar.methods  # noqa: F401 — registriert die Handler
+    from sidecar.rpc import call_method
+
+    q, _events, _audio = queue
+    ordner = tmp_path / "stapel"
+    ordner.mkdir()
+    (ordner / "a.mp3").write_bytes(b"x")
+    (ordner / "b.wav").write_bytes(b"x")
+    (ordner / "liesmich.txt").write_bytes(b"x")
+
+    res = call_method(
+        "queue.enqueue", {"paths": [str(ordner), str(tmp_path / "fehlt.mp3")]}
+    )
+
+    assert res["count"] == 2
+    assert [j["path"].endswith("a.mp3") for j in res["enqueued"]][0] is True
+    assert any(s["reason"] == "nicht gefunden" for s in res["skipped"])
+    assert [j["state"] for j in jobs.list_jobs()] == [QUEUED, QUEUED]
+
+
+def test_config_get_liefert_die_endungsliste(store):
+    """Damit der Dateidialog im Frontend keine eigene Liste pflegt."""
+    import sidecar.methods  # noqa: F401
+    from sidecar.rpc import call_method
+
+    cfg = call_method("config.get")
+
+    assert ".mp3" in cfg["audio_extensions"]
+
+
 def test_events_melden_start_und_ende(queue, monkeypatch, store):
     q, events, audio = queue
     monkeypatch.setattr("sidecar.meeting_pipeline.run_stages", _fake_stages([]))

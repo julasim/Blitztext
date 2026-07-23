@@ -6,6 +6,7 @@
 // yet, no dictation history mixed in — will come in Phase 2).
 
 import { FileAudio, Plus, Settings as SettingsIcon, Zap } from "lucide-react";
+import { QueuePanel } from "./QueuePanel";
 import { useMeetingStore } from "../state/useMeetingStore";
 import type { MeetingListItem } from "../lib/types";
 
@@ -140,6 +141,8 @@ export function Sidebar() {
           Datei transkribieren
         </button>
       </div>
+
+      <QueuePanel />
 
       {/* Meeting list */}
       <div style={{ padding: "4px 8px", flex: 1, overflowY: "auto" }}>
