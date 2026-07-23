@@ -39,7 +39,7 @@ Transport: line-delimited JSON-RPC 2.0 over stdin/stdout of the sidecar process.
 
 | Status | Method | Request | Response |
 |---|---|---|---|
-| ✅ | `meeting.import_file` | `{path, title?, language="de", whisper_model?, min_speakers?, max_speakers?}` | `{meeting_id}` — **async**, treibt `meeting.progress`/`done`/`error` |
+| ✅ | `meeting.import_file` | `{path, title?, language="de", whisper_model?, min_speakers?, max_speakers?}` | `{meeting_id, job_id}` — reiht in die Warteschlange ein und kehrt sofort zurück |
 | ✅ | `meeting.list` | `{limit=100, offset=0}` | `MeetingListItem[]` |
 | ✅ | `meeting.get` | `{id}` | `MeetingFull` |
 | ✅ | `meeting.delete` | `{id}` | `{ok}` |
@@ -47,6 +47,45 @@ Transport: line-delimited JSON-RPC 2.0 over stdin/stdout of the sidecar process.
 
 `whisper_model` default: `large-v3` mit CUDA, sonst `medium`
 (`meeting_pipeline.pick_default_whisper_model`).
+
+### Warteschlange
+
+Importe laufen **seriell** durch einen einzigen Worker (`sidecar/jobs.py`).
+Der Zustand liegt in der Tabelle `jobs` und überlebt einen Absturz.
+
+| Status | Method | Request | Response |
+|---|---|---|---|
+| ✅ | `queue.list` | `{limit=200}` | `Job[]` in Abarbeitungsreihenfolge |
+| ✅ | `queue.state` | — | `{counts: {queued, running, done, failed, cancelled}, current_job_id, worker_alive}` |
+| ✅ | `queue.cancel` | `{job_id}` | `{ok, state, pending}` — bei `pending: true` läuft der Job noch und bricht am nächsten Prüfpunkt ab |
+| ✅ | `queue.clear_finished` | — | `{ok, removed}` — entfernt `done`/`failed`/`cancelled` |
+
+```ts
+type Job = {
+  id: string
+  meeting_id: string | null   // null nach Abbruch: die leere Hülle wird gelöscht,
+                              // der Job-Eintrag bleibt als Historie
+  source_path: string
+  params: { language: string; whisper_model: string;
+            min_speakers: number | null; max_speakers: number | null }
+  state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+  position: number            // FIFO-Schlüssel, monoton steigend
+  attempts: number            // Wiederanläufe nach Absturz, max. 2
+  error?: string
+  created_at: string
+  started_at?: string
+  finished_at?: string
+}
+```
+
+**Abbruch:** Ein wartender Job wird sofort verworfen. Ein laufender wird
+vorgemerkt; die Pipeline prüft an den Stage-Grenzen und nach jedem
+Whisper-Segment. Während der Diarization gibt es keinen Prüfpunkt — dort
+greift der Abbruch erst danach.
+
+**Wiederanlauf:** Steht beim Start ein Job auf `running`, war das ein
+Absturz (nur ein Prozess besitzt die DB). Er geht zurück in die
+Warteschlange, höchstens zweimal; danach `failed`.
 
 ### Speakers
 
@@ -85,6 +124,13 @@ Der HF-Token liegt im Windows-Anmeldeinformationsmanager (`keyring`, Dienst
 | `cleanup.progress` | `{meeting_id, processed, skipped, total, turn_id}` |
 | `cleanup.done` | `{meeting_id, processed, skipped, total}` |
 | `cleanup.error` | `{meeting_id, turn_id?, message}` — pro Turn, bricht den Lauf **nicht** ab |
+| `queue.enqueued` | `{job_id, meeting_id, path}` |
+| `queue.job_started` | `{job_id, meeting_id, path}` |
+| `queue.job_done` | `{job_id, meeting_id}` |
+| `queue.job_failed` | `{job_id, meeting_id, message}` — die Warteschlange läuft weiter |
+| `queue.job_cancelled` | `{job_id, meeting_id}` |
+| `queue.changed` | wie `queue.state` — nach jeder Änderung, für Zähler/Badges |
+| `queue.recovered` | `{requeued: string[], failed: string[]}` — einmalig beim Start nach einem Absturz |
 
 Auf der Rust-Seite werden alle Notifications als `window.emit("sidecar-event",
 {event, params})` weitergereicht; das Frontend filtert mit `onEvent(name, …)`

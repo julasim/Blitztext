@@ -83,6 +83,22 @@ def main() -> int:
     log.info("Blitztext sidecar v%s starting (log: %s)", rpc.__version__, log_path)
 
     _preload_heavy_imports_synchronously()
+
+    # Warteschlange starten. Sammelt zuerst Jobs ein, die beim letzten Lauf
+    # auf "running" standen — die kann es nur nach einem Absturz geben, weil
+    # genau ein Prozess die DB besitzt.
+    try:
+        from sidecar.jobs import JobQueue
+
+        recovered = JobQueue.instance().start()
+        if recovered.get("requeued") or recovered.get("failed"):
+            log.warning(
+                "Warteschlange nach Absturz aufgeräumt: %d neu eingereiht, %d aufgegeben",
+                recovered["requeued"], recovered["failed"],
+            )
+    except Exception:  # noqa: BLE001 — ohne Queue läuft der Rest weiter
+        log.exception("Job-Warteschlange konnte nicht gestartet werden")
+
     log.info("preload phase done; entering serve_stdio loop")
 
     try:

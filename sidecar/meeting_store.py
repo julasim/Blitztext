@@ -121,8 +121,32 @@ CREATE INDEX IF NOT EXISTS idx_speakers_meeting ON speakers(meeting_id);
 # Einführung dieses Mechanismus entstanden sind: die tragen bereits
 # `user_version = 1` und werden deshalb übersprungen.
 
+# Schritt 2: Import-Warteschlange. Die Jobs liegen in der DB (nicht nur im
+# Speicher), damit ein Absturz mitten im Stapel nachvollziehbar bleibt und
+# unterbrochene Läufe beim nächsten Start wieder aufgenommen werden können.
+_JOBS_SQL = """
+CREATE TABLE IF NOT EXISTS jobs (
+    id          TEXT PRIMARY KEY,
+    -- Bewusst NULL-bar mit SET NULL: beim Abbruch verschwindet die leere
+    -- Meeting-Hülle, der Job-Eintrag bleibt aber als Historie stehen.
+    meeting_id  TEXT REFERENCES meetings(id) ON DELETE SET NULL,
+    source_path TEXT NOT NULL,
+    params_json TEXT NOT NULL DEFAULT '{}',
+    state       TEXT NOT NULL DEFAULT 'queued',
+    position    INTEGER NOT NULL,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    error       TEXT,
+    created_at  TEXT NOT NULL,
+    started_at  TEXT,
+    finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_state_pos ON jobs(state, position);
+"""
+
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _SCHEMA_SQL),
+    (2, _JOBS_SQL),
 )
 
 _SCHEMA_VERSION = max(v for v, _ in _MIGRATIONS)
@@ -166,6 +190,12 @@ def _connect() -> sqlite3.Connection:
     _migrate(conn)
     _conn = conn
     return conn
+
+
+def connection() -> sqlite3.Connection:
+    """Die offene Verbindung — für Module, die eigene Tabellen bewirtschaften
+    (``sidecar/jobs.py``). Schema und Migrationen bleiben hier."""
+    return _connect()
 
 
 def schema_version() -> int:

@@ -123,53 +123,79 @@ def meeting_import_file(
     min_speakers: int | None = None,
     max_speakers: int | None = None,
 ) -> dict:
-    """Kick off the import pipeline. Returns the ``meeting_id`` immediately;
-    heavy stages (decode → transcribe → diarize → merge → persist) run in a
-    background thread and push ``meeting.progress`` / ``meeting.done`` /
-    ``meeting.error`` events to the UI."""
+    """Datei in die Warteschlange stellen.
+
+    Gibt ``meeting_id`` (und ``job_id``) sofort zurück; die fünf Stages
+    laufen im Queue-Worker und melden sich über ``meeting.progress`` /
+    ``meeting.done`` / ``meeting.error`` sowie die ``queue.*``-Events.
+
+    Historisch startete diese Methode direkt einen Thread. Seit der
+    Warteschlange läuft **immer nur ein Import gleichzeitig** — zwei
+    parallele Läufe teilten sich sonst Whisper-Cache und GPU.
+    """
     import logging
 
     log = logging.getLogger("sidecar.import")
-    log.info("meeting.import_file received: path=%r title=%r model=%r", path, title, whisper_model)
+    log.info("meeting.import_file: path=%r title=%r model=%r", path, title, whisper_model)
 
-    # Lazy import so the sidecar starts cleanly even if torch/pyannote
-    # aren't installed yet — only the actual import call will fail.
-    from sidecar.meeting_pipeline import create_meeting_shell, run_stages
+    from sidecar.jobs import JobQueue
 
     try:
-        meeting_id, resolved_model = create_meeting_shell(
-            path, title=title, language=language, whisper_model=whisper_model,
+        result = JobQueue.instance().enqueue(
+            path,
+            title=title,
+            language=language,
+            whisper_model=whisper_model,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
         )
     except FileNotFoundError as e:
         log.warning("meeting.import_file FileNotFoundError: %s", e)
         raise RpcError(APP_NOT_FOUND, str(e)) from e
     except Exception as e:
-        log.exception("meeting.import_file create_meeting_shell failed")
+        log.exception("meeting.import_file enqueue failed")
         raise RpcError(-32001, f"Import konnte nicht gestartet werden: {e}") from e
 
-    log.info("meeting %s shell created (model=%s); starting worker thread", meeting_id, resolved_model)
+    return result
 
-    def _worker() -> None:
-        log.info("worker[%s] started", meeting_id[:8])
-        try:
-            run_stages(
-                meeting_id,
-                path,
-                language=language,
-                whisper_model=resolved_model,
-                min_speakers=min_speakers,
-                max_speakers=max_speakers,
-                on_event=emit_event,
-            )
-            log.info("worker[%s] finished cleanly", meeting_id[:8])
-        except Exception:
-            # run_stages already emitted meeting.error + set status="error".
-            # Log + swallow so the thread doesn't trip the Python-wide
-            # unhandled-exception hook.
-            log.exception("worker[%s] failed", meeting_id[:8])
 
-    threading.Thread(target=_worker, name=f"import-{meeting_id[:8]}", daemon=True).start()
-    return {"meeting_id": meeting_id}
+# --- Warteschlange ---------------------------------------------------------
+
+
+@method("queue.list")
+def queue_list(limit: int = 200) -> list[dict]:
+    """Alle Jobs in Abarbeitungsreihenfolge."""
+    from sidecar import jobs
+
+    return jobs.list_jobs(limit=limit)
+
+
+@method("queue.state")
+def queue_state() -> dict:
+    """Zähler je Zustand + der gerade laufende Job."""
+    from sidecar.jobs import JobQueue
+
+    return JobQueue.instance().state()
+
+
+@method("queue.cancel")
+def queue_cancel(job_id: str) -> dict:
+    """Wartenden Job verwerfen oder laufenden zum Abbruch vormerken.
+
+    Bei einem laufenden Job kommt ``{pending: true}`` zurück — der Abbruch
+    greift am nächsten Prüfpunkt (Stage-Grenze oder Whisper-Segment).
+    """
+    from sidecar.jobs import JobQueue
+
+    return JobQueue.instance().cancel(job_id)
+
+
+@method("queue.clear_finished")
+def queue_clear_finished() -> dict:
+    """Erledigte, fehlgeschlagene und abgebrochene Einträge entfernen."""
+    from sidecar.jobs import JobQueue
+
+    return JobQueue.instance().clear_finished()
 
 
 @method("cleanup.run")

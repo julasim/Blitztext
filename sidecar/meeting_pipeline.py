@@ -32,6 +32,16 @@ from sidecar.diarization import DiarizationPipeline
 from sidecar.merger import merge, speaker_to_store_dict, turn_to_store_dict
 
 
+class PipelineCancelled(Exception):
+    """Der Lauf wurde abgebrochen — kein Fehler.
+
+    Wird geworfen, sobald ``should_cancel()`` an einem Prüfpunkt True
+    liefert. ``run_stages`` behandelt das getrennt von echten Fehlern: das
+    Meeting bleibt **nicht** auf ``status="error"`` stehen, und es geht kein
+    ``meeting.error``-Event raus.
+    """
+
+
 # --- Progress helpers ------------------------------------------------------
 
 _STAGES = [
@@ -164,12 +174,26 @@ def run_stages(
     min_speakers: int | None = None,
     max_speakers: int | None = None,
     on_event: Callable[[str, dict], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> None:
     """Decode → transcribe → diarize → merge → persist for an existing
-    meeting row. Does all the heavy lifting."""
+    meeting row. Does all the heavy lifting.
+
+    ``should_cancel`` wird an den Stage-Grenzen und nach jedem
+    Whisper-Segment abgefragt; liefert es True, fliegt
+    :class:`PipelineCancelled`. **Während der Diarization gibt es keinen
+    Prüfpunkt** — pyannote meldet dort keinen Fortschritt, der Abbruch
+    greift also erst, wenn sie fertig ist.
+    """
     src = Path(file_path)
+
+    def _guard() -> None:
+        if should_cancel is not None and should_cancel():
+            raise PipelineCancelled()
+
     try:
         # -- Stage: decode --------------------------------------------------
+        _guard()
         _emit(on_event, meeting_id, "decode", 0.0)
         t0 = time.time()
         audio, duration_ms = audio_io.load_audio(str(src))
@@ -193,14 +217,20 @@ def run_stages(
         _emit(on_event, meeting_id, "decode", 1.0, eta_sec=time.time() - t0)
 
         # -- Stage: transcribe ---------------------------------------------
+        _guard()
         _emit(on_event, meeting_id, "transcribe", 0.0)
         transcriber = _get_transcriber(whisper_model, language)
         ts_start = time.time()
+
+        def _on_transcribe_progress(p: float) -> None:
+            # Läuft einmal je Whisper-Segment. Der einzige feingranulare
+            # Abbruchpunkt im ganzen Lauf — und der wichtigste, weil
+            # Transkription 55 % der Zeit ausmacht.
+            _guard()
+            _emit(on_event, meeting_id, "transcribe", p)
+
         words, info = transcriber.transcribe_with_words(
-            audio,
-            on_progress=lambda p: _emit(
-                on_event, meeting_id, "transcribe", p
-            ),
+            audio, on_progress=_on_transcribe_progress
         )
         if info.get("language") and info.get("language") != language:
             # Auto-detect result differs — store what Whisper actually found.
@@ -214,6 +244,7 @@ def run_stages(
         # empty segment list. The merger then produces a single "Speaker 1"
         # turn list, splitting on long pauses for readability. The user
         # gets a usable transcript instead of a hard import failure.
+        _guard()
         _emit(on_event, meeting_id, "diarize", 0.0)
         diar_start = time.time()
         segments: list[dict] = []
@@ -242,6 +273,7 @@ def run_stages(
         _emit(on_event, meeting_id, "diarize", 1.0, eta_sec=time.time() - diar_start)
 
         # -- Stage: merge ---------------------------------------------------
+        _guard()
         _emit(on_event, meeting_id, "merge", 0.0)
         turns, speakers = merge(words, segments)
         _emit(on_event, meeting_id, "merge", 1.0)
@@ -260,6 +292,12 @@ def run_stages(
 
         if on_event is not None:
             on_event("meeting.done", {"meeting_id": meeting_id})
+
+    except PipelineCancelled:
+        # Kein Fehler: kein status="error", kein meeting.error. Die
+        # Warteschlange räumt die Meeting-Hülle auf, sobald sie den
+        # Abbruch verbucht hat.
+        raise
 
     except Exception as e:
         meeting_store.set_status(meeting_id, "error")

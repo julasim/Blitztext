@@ -115,3 +115,42 @@ def test_fehlende_datei_meldet_sich_sauber(store, tmp_path):
 
     with pytest.raises(FileNotFoundError):
         create_meeting_shell(str(tmp_path / "gibt-es-nicht.mp3"))
+
+
+def test_zwei_dateien_durch_die_echte_warteschlange(store, mp3):
+    """Der Integrationsbeweis: Queue-Worker + echte Pipeline, zwei Dateien
+    nacheinander. Deckt ab, was die eingesetzten Tests in test_jobs.py
+    bewusst aussparen — dass run_stages mit den Queue-Parametern wirklich
+    zusammenspielt."""
+    import time
+
+    from sidecar.jobs import DONE, JobQueue
+    from sidecar import jobs as jobs_mod
+
+    JobQueue.reset_for_tests()
+    events: list[tuple[str, dict]] = []
+    q = JobQueue(on_event=lambda n, p: events.append((n, p)))
+    JobQueue._instance = q
+    try:
+        first = q.enqueue(str(mp3), title="Erste")
+        second = q.enqueue(str(mp3), title="Zweite")
+        q.start()
+
+        deadline = time.time() + 600
+        while time.time() < deadline:
+            states = [j["state"] for j in jobs_mod.list_jobs()]
+            if all(s == DONE for s in states):
+                break
+            time.sleep(0.5)
+
+        assert [j["state"] for j in jobs_mod.list_jobs()] == [DONE, DONE]
+        for res in (first, second):
+            m = store.get_meeting(res["meeting_id"])
+            assert m is not None
+            assert m["status"] == "ready"
+
+        starts = [p["job_id"] for n, p in events if n == "queue.job_started"]
+        assert starts == [first["job_id"], second["job_id"]], "Reihenfolge verletzt"
+    finally:
+        q.stop()
+        JobQueue.reset_for_tests()

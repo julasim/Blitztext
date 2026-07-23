@@ -77,17 +77,20 @@ plus CUDA-Verifikation.
   gerade benennt. Rename und Merge sind in `SpeakerList.tsx` fertig, das Snippet
   nicht — es gibt weder die RPC-Methode in `sidecar/methods.py` noch ein
   `<audio>`-Element im Popover.
-- **Nächster Schritt: serielle Job-Queue im Sidecar.** Heute startet jeder
-  `meeting.import_file` einen eigenen Thread, den niemand abbrechen kann;
-  zwei parallele Importe teilen sich `_transcriber_cache` und die GPU, und
-  ein Absturz lässt das Meeting für immer auf `status="processing"` stehen.
-  Die Queue repariert alle drei Punkte und ist die Voraussetzung für Batch.
-  Dazu ein LRU-Deckel auf `_transcriber_cache` (heute unbegrenzt — fällt auf,
-  sobald die UI Modelle wählen lässt).
-- **Danach:** Ordner-Import · Sprache/Modell/Diarization-Schalter im
-  Import-UI (die Parameter existieren in `import_file` bereits, sie werden
-  nur nicht durchgereicht) · SRT/VTT/DOCX aus `words_json` · ID3-Tags für
-  Titel und Datum (PyAV liefert sie mit, keine neue Dependency).
+- **Die Queue hat noch keine Oberfläche.** `queue.list`, `queue.state`,
+  `queue.cancel` und `queue.clear_finished` stehen im Sidecar; das Frontend
+  ruft weiterhin nur `meeting.import_file` und sieht weder Warteschlange noch
+  Abbrechen-Knopf. Nächster sichtbarer Schritt: Mehrfachauswahl im Dialog,
+  Ordner-Drop und eine Queue-Ansicht.
+- **LRU-Deckel auf `_transcriber_cache`** (`meeting_pipeline.py`): wächst
+  unbegrenzt, Schlüssel ist `modell:sprache:device`. Heute liegt genau ein
+  Eintrag drin; sobald die UI Modelle wählen lässt, liegen `large-v3`,
+  `turbo` und `medium` gleichzeitig im VRAM.
+- **Danach:** Sprache/Modell/Diarization-Schalter im Import-UI (die Parameter
+  existieren in `import_file` bereits, sie werden nur nicht durchgereicht) ·
+  SRT/VTT/DOCX aus `words_json` · ID3-Tags für Titel und Datum (PyAV liefert
+  sie mit, keine neue Dependency) · `meeting.reprocess` gegen die schon
+  kopierte Datei.
 - **Phase-1-Rest:** `speaker.sample` fehlt — beim Sprecher-Umbenennen soll
   man eine 5-Sekunden-Hörprobe hören. Rename und Merge sind in
   `SpeakerList.tsx` fertig, das Snippet nicht (weder RPC-Methode noch
@@ -180,6 +183,10 @@ Rust ist bewusst dumm (~250 LOC Transport, null Domänenlogik). Neue Features
 gehören nach Python; Rust nur anfassen für Fenster, Shortcuts, Prozess-Handling.
 
 Was man über die Pipeline wissen muss:
+- **Importe laufen durch die Warteschlange** (`sidecar/jobs.py`), nie direkt.
+  `meeting.import_file` reiht nur ein und kehrt sofort zurück; ein einziger
+  Worker-Thread arbeitet seriell ab. Zustand in der Tabelle `jobs`, damit ein
+  Absturz nachvollziehbar bleibt.
 - `meeting_pipeline.py` — fünf Stages (decode 5 % → transcribe 55 % →
   diarize 30 % → merge 5 % → persist 5 %), Gewichte stehen in `_STAGES` und
   ergeben die eine Prozentzahl der UI. Jeder Import läuft hier durch.
@@ -197,6 +204,8 @@ Was man über die Pipeline wissen muss:
   Die anspruchsvollste Logik im Projekt.
 - `run_stages()` (`sidecar/meeting_pipeline.py`) — die fünf Stages; jeder
   Import läuft hier durch.
+- `JobQueue` (`sidecar/jobs.py`) — serielle Abarbeitung, Abbruch,
+  Wiederanlauf. Einziger Ort, an dem die Pipeline gestartet wird.
 - `Transcriber` (`core/transcription.py`) — faster-whisper-Wrapper.
 - `_connect()` (`sidecar/meeting_store.py`) — SQLite-Zugang; einzige Verbindung,
   bewusst modulglobal (Single-Prozess-Modell).
@@ -212,13 +221,14 @@ Was man über die Pipeline wissen muss:
 **Sidecar** (`sidecar/` — das Backend):
 - `rpc.py` + `methods.py` — JSON-RPC-Dispatcher + Methoden; Contract in
   `rpc_schema.md`.
+- `jobs.py` — die Warteschlange (Worker-Thread, Zustände, Wiederanlauf).
 - `meeting_pipeline.py`, `diarization.py`, `merger.py`, `meeting_store.py`,
   `audio_io.py` — die Pipeline (Datei → Whisper+pyannote → Turns → SQLite).
 
 **Tests** (`tests/`, pytest): `conftest.py` (isolierte DB je Test, Opt-in-Flags),
 `test_merger.py`, `test_store.py`, `test_migrations.py`, `test_export.py`,
-`test_rpc.py`; markiert und übersprungen: `test_pipeline_mp3.py` (`--slow`),
-`test_cleanup.py` (`--ollama`).
+`test_rpc.py`, `test_jobs.py`; markiert und übersprungen:
+`test_pipeline_mp3.py` (`--slow`), `test_cleanup.py` (`--ollama`).
 
 **Tauri-App** (`app/`):
 - `src/` — React: `App.tsx`, Views (`MeetingImport`, `MeetingReview`,
@@ -262,10 +272,17 @@ Was man über die Pipeline wissen muss:
   Windows ein cuDNN mit fehlendem Symbol mit, das pyannote-Inferenz aus
   nativem Code heraus killt — unfangbar für Python. Whisper behält die GPU.
   `device = cpu` beim Laden ist also **kein** Defekt.
-- **Ein Import = ein Thread.** `meeting.import_file` startet pro Aufruf einen
-  eigenen Worker; zwei parallele Importe teilen sich `_transcriber_cache` und
-  die GPU. Heute unkritisch (UI lässt nur eine Datei zu), aber der Grund,
-  warum Batch zuerst eine Queue braucht.
+- **Abbruch greift nicht während der Diarization.** Prüfpunkte gibt es an den
+  Stage-Grenzen und nach jedem Whisper-Segment; pyannote meldet keinen
+  Fortschritt, also wartet ein Abbruch dort, bis sie fertig ist. Bewusst so
+  belassen — ein Knopf, der lügt, wäre schlimmer als einer, der wartet.
+- **Ein `running`-Job beim Start = Absturz.** Nur ein Prozess besitzt die DB.
+  `JobQueue.recover_orphans()` reiht solche Jobs neu ein, höchstens
+  `MAX_ATTEMPTS` (2) mal — sonst dreht eine Datei, die den Prozess
+  zuverlässig killt, eine Endlosschleife über alle Neustarts.
+- **`jobs.meeting_id` ist NULL-bar** (`ON DELETE SET NULL`). Beim Abbruch
+  verschwindet die leere Meeting-Hülle, der Job-Eintrag bleibt als Historie.
+  Wer über Jobs joint, muss NULL abfangen.
 - pyannote braucht HF-Account mit akzeptierten Modell-Lizenzen (`PLAN.md` § Phase 0).
   Token liegt im Windows-Anmeldeinformationsmanager (`keyring`, Dienst
   `Blitztext`, Key `hf_token`) — prüfbar über die RPC-Methode
@@ -278,6 +295,18 @@ Was man über die Pipeline wissen muss:
 
 ## Änderungslog
 
+- 2026-07-23 — **Import-Warteschlange** (`sidecar/jobs.py`, Migration 2).
+  Ersetzt das Thread-pro-Aufruf-Modell: ein Worker arbeitet seriell ab, der
+  Zustand liegt in der Tabelle `jobs`. Damit gibt es erstmals **Abbruch**
+  (wartend sofort, laufend am nächsten Prüfpunkt) und **Wiederanlauf** —
+  ein Job, der beim Start auf `running` steht, kann nur ein Absturz sein und
+  geht zurück in die Schlange, höchstens zweimal. Ein fehlgeschlagener Job
+  stoppt die Schlange nicht. `meeting.import_file` reiht jetzt nur noch ein
+  (gibt zusätzlich `job_id` zurück), dazu `queue.list/state/cancel/
+  clear_finished` und sieben `queue.*`-Events. 17 neue Tests gegen eine
+  eingesetzte Pipeline plus ein `--slow`-Integrationstest mit zwei echten
+  MP3s. Bewusste Grenze: während der Diarization gibt es keinen
+  Abbruch-Prüfpunkt, weil pyannote keinen Fortschritt meldet.
 - 2026-07-23 — **Fokus: nur noch Datei-Transkription.** Entscheidung von
   Julius, radikale Variante. Entfernt: `sidecar/dictate.py`,
   `sidecar/recording.py`, `core/audio.py`, `core/injector.py`,
