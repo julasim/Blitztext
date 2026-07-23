@@ -25,7 +25,7 @@ from pathlib import Path
 
 from core.audio import AudioRecorder
 from sidecar import meeting_store
-from sidecar.meeting_pipeline import _pick_default_whisper_model, run_stages
+from sidecar.meeting_pipeline import pick_default_whisper_model, run_stages
 from sidecar.rpc import emit_event
 
 
@@ -80,7 +80,7 @@ class RecordingSession:
 
             meeting_store.init_db()
             display_title = (title or "").strip() or "Live-Aufnahme"
-            model = whisper_model or _pick_default_whisper_model()
+            model = whisper_model or pick_default_whisper_model()
 
             mid = meeting_store.create_meeting(
                 title=display_title,

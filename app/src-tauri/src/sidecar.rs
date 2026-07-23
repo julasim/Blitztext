@@ -212,7 +212,7 @@ impl SidecarHandle {
             .map_err(|_| {
                 // Clean up pending slot on timeout.
                 self.pending.lock().unwrap().remove(&id);
-                format!("sidecar RPC '{method}' timed out after 30s")
+                format!("sidecar RPC '{method}' timed out after 600s")
             })?
             .map_err(|_| format!("sidecar channel closed during '{method}'"))?;
 

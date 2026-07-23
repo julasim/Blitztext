@@ -6,10 +6,11 @@
 // show a blocking banner so the user knows what's wrong — the rest of
 // the app won't function anyway.
 
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { Titlebar } from "./components/Titlebar";
-import { call } from "./lib/rpc";
+import { call, onEvent } from "./lib/rpc";
 import { useMeetingStore } from "./state/useMeetingStore";
 import { Library } from "./views/Library";
 import { MeetingImport } from "./views/MeetingImport";
@@ -60,9 +61,6 @@ export default function App() {
   useEffect(() => {
     const offs: Array<() => void> = [];
     (async () => {
-      const { listen } = await import("@tauri-apps/api/event");
-      const { onEvent } = await import("./lib/rpc");
-
       offs.push(
         await listen<{ action: string }>("bt://shortcut", (evt) => {
           if (evt.payload.action === "toggle_dictate") {

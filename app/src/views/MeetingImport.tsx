@@ -137,17 +137,9 @@ export function MeetingImport() {
 
         <Dropzone
           hover={hover}
-          setHover={setHover}
           path={path}
           onClear={() => setPath(null)}
           onPick={pick}
-          onFile={(p) => {
-            setPath(p);
-            if (!title) {
-              const base = p.split(/[\\/]/).pop() || "";
-              setTitle(base.replace(/\.[^.]+$/, ""));
-            }
-          }}
         />
 
         {path && (
@@ -261,11 +253,9 @@ function Dropzone({
   onPick,
 }: {
   hover: boolean;
-  setHover: (v: boolean) => void;
   path: string | null;
   onClear: () => void;
   onPick: () => void;
-  onFile: (p: string) => void;
 }) {
   // No HTML5 drop handler — Tauri 2's webview doesn't expose file paths
   // through dataTransfer. The actual drop is handled by the page-level

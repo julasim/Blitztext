@@ -19,17 +19,18 @@ type RecState =
 
 export function MiniWidget() {
   const [state, setState] = useState<RecState>({ name: "idle" });
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   const [menuOpen, setMenuOpen] = useState(false);
   const [pauseStartedAt, setPauseStartedAt] = useState<number | null>(null);
   const [accumulatedPauseMs, setAccumulatedPauseMs] = useState(0);
 
   // Tick the clock once a second while recording so the timer keeps moving.
+  const tickerRunning = state.name === "recording" && !state.paused;
   useEffect(() => {
-    if (state.name !== "recording" || state.paused) return;
+    if (!tickerRunning) return;
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
-  }, [state.name, state.name === "recording" && state.paused]);
+  }, [tickerRunning]);
 
   // Sync to recording.* events: useful if the sidecar starts/stops via
   // a different surface (global shortcut, tray) while the widget is open.

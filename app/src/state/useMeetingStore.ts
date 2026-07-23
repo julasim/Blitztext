@@ -15,6 +15,15 @@ export type ProgressInfo = {
   eta_sec?: number | null;
 };
 
+/** Kopie ohne den Schlüssel `key` — für Fortschritts-Einträge, die nach
+ *  meeting.done/error verschwinden sollen. */
+function withoutKey<T>(map: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in map)) return map;
+  const next = { ...map };
+  delete next[key];
+  return next;
+}
+
 type View =
   | { name: "library" }
   | { name: "import" }
@@ -220,10 +229,7 @@ export const useMeetingStore = create<State>((set, get) => ({
       "meeting.done",
       (p) => {
         // Drop the progress entry + refresh the meeting + the library list.
-        set((s) => {
-          const { [p.meeting_id]: _drop, ...rest } = s.progress;
-          return { progress: rest };
-        });
+        set((s) => ({ progress: withoutKey(s.progress, p.meeting_id) }));
         void get().loadMeetings();
         const active = get().active;
         if (active?.id === p.meeting_id) void get().loadMeeting(p.meeting_id);
@@ -236,10 +242,7 @@ export const useMeetingStore = create<State>((set, get) => ({
       (p) => {
         set((s) => ({
           importErrors: { ...s.importErrors, [p.meeting_id]: p.message },
-          progress: (() => {
-            const { [p.meeting_id]: _drop, ...rest } = s.progress;
-            return rest;
-          })(),
+          progress: withoutKey(s.progress, p.meeting_id),
         }));
         void get().loadMeetings();
       },

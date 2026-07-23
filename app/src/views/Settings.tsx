@@ -152,8 +152,21 @@ function HfTokenEditor() {
     }
   };
 
+  // Beim Mount einmal laden. Bewusst inline statt `refresh()`: der
+  // cancelled-Guard verhindert setState nach dem Unmount.
   useEffect(() => {
-    void refresh();
+    let cancelled = false;
+    void (async () => {
+      try {
+        const s = await call<SettingsSnapshot>("settings.get");
+        if (!cancelled) setSnap(s);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const probe = async () => {

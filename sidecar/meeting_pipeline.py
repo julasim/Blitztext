@@ -108,7 +108,7 @@ def _get_transcriber(model: str, language: str) -> Transcriber:
     return t
 
 
-def _pick_default_whisper_model() -> str:
+def pick_default_whisper_model() -> str:
     """``large-v3`` if CUDA (~10% more accurate than turbo, especially on
     short noisy clips with quiet speakers), ``medium`` else."""
     try:
@@ -142,7 +142,7 @@ def create_meeting_shell(
         raise FileNotFoundError(f"Audio-Datei nicht gefunden: {file_path}")
 
     if whisper_model is None:
-        whisper_model = _pick_default_whisper_model()
+        whisper_model = pick_default_whisper_model()
 
     meeting_store.init_db()
     meeting_id = meeting_store.create_meeting(
@@ -306,5 +306,5 @@ def run_import(
 def warm_models(language: str = "de") -> None:
     """Pre-load models so the first real import is fast. Optional — the
     pipeline will load them on demand otherwise."""
-    _get_transcriber(_pick_default_whisper_model(), language)
+    _get_transcriber(pick_default_whisper_model(), language)
     DiarizationPipeline.instance().ensure_loaded()

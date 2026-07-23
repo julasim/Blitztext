@@ -1,0 +1,19 @@
+PLATZHALTER — kein echter Sidecar-Build.
+
+Warum die Datei existiert:
+tauri.conf.json deklariert   "resources": ["binaries/sidecar/**/*"]
+Matcht das Glob keine Datei, bricht schon `cargo check` ab
+("glob pattern ... didn't match any files") — auch im Dev-Modus.
+
+Im Dev-Modus (`npm run tauri dev`) wird der Sidecar NICHT von hier gestartet:
+src/sidecar.rs verzweigt auf cfg!(debug_assertions) und ruft
+`python -m sidecar` aus ../../../.venv-sidecar auf. Diese Datei genuegt daher
+fuer die Entwicklung.
+
+VOR EINEM RELEASE-BUILD ersetzen durch den echten PyInstaller-Output:
+  1. .venv-sidecar\Scripts\python.exe -m PyInstaller build-sidecar.spec
+  2. dist\blitztext-sidecar\  ->  app\src-tauri\binaries\sidecar\
+(ca. 4,8 GB, torch+CUDA sind der Grossteil)
+
+Angelegt 2026-07-23, nachdem der alte binaries/-Ordner beim Aufraeumen
+geloescht wurde (war nie im Git, da gitignored).
