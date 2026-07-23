@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Rechte des Hauptfensters: Fenstersteuerung, Dateidialoge, Benachrichtigungen. Kein fs/shell — Dateien fasst ausschließlich der Python-Sidecar an, gespawnt über std::process::Command. Keine globalen Shortcuts, kein Mikrofon.",
+  "description": "Rechte des Hauptfensters. Genau das, was Titlebar.tsx, die Dateidialoge und die Fertig-Benachrichtigung aufrufen — nichts darüber hinaus. Kein fs/shell (Dateien fasst ausschließlich der Python-Sidecar an, gespawnt über std::process::Command), keine globalen Shortcuts, kein Mikrofon.",
   "windows": [
     "main"
   ],
@@ -11,9 +11,6 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-start-dragging",
-    "core:window:allow-show",
-    "core:window:allow-hide",
-    "core:window:allow-set-focus",
     "core:window:allow-is-maximized",
     "dialog:default",
     "dialog:allow-confirm",
