@@ -36,5 +36,6 @@ speechbrain>=1.0,<1.1
 # stehen — rausnehmen killt den Diarization-Import. Nicht "aufräumen".
 matplotlib>=3.7
 
-# --- Packaging (dev-only) ---
+# --- Dev-only ---
 pyinstaller>=6.6.0
+pytest>=8.0

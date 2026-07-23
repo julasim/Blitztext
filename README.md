@@ -44,14 +44,13 @@ ein gebauter Sidecar wird dafür nicht gebraucht.
 
 ## Tests
 
-Vier Smoke-Skripte, kein Runner:
-
 ```powershell
-.\.venv-sidecar\Scripts\python.exe -m sidecar._smoke_merger   # synthetisch, keine Deps
-.\.venv-sidecar\Scripts\python.exe -m sidecar._smoke_store    # merger → SQLite → get_meeting
-.\.venv-sidecar\Scripts\python.exe -m sidecar._smoke_cleanup  # braucht Ollama
-.\.venv-sidecar\Scripts\python.exe -m sidecar._smoke_e2e      # braucht Ollama
+.\.venv-sidecar\Scripts\python.exe -m pytest            # Standardlauf, ~2 Sekunden
+.\.venv-sidecar\Scripts\python.exe -m pytest --slow     # + Whisper/pyannote über eine echte MP3
+.\.venv-sidecar\Scripts\python.exe -m pytest --ollama   # + LLM-Cleanup gegen lokales Ollama
 ```
 
-`_smoke_store` und `_smoke_e2e` isolieren `APPDATA` in einem Temp-Verzeichnis —
-die echte Meeting-DB bleibt unberührt.
+Der Standardlauf braucht weder Modelle noch Ollama noch Netz. Was teuer ist,
+trägt einen Marker und kommt nur auf Zuruf mit — sonst läuft die Suite
+niemand. Jeder Test bekommt über die `store`-Fixture eine eigene DB in einem
+Temp-Verzeichnis; die echte Meeting-DB wird nie angefasst.

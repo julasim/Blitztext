@@ -110,18 +110,20 @@ cd app\src-tauri; cargo check
 '{"jsonrpc":"2.0","id":1,"method":"ping"}' | .\.venv-sidecar\Scripts\python.exe -m sidecar
 ```
 
-**Tests** = vier Smoke-Skripte im Sidecar, kein pytest, kein Runner. Einzeln
-aufrufen (Modul-Syntax ist Pflicht, sie setzen `sys.path` selbst):
+**Tests** — pytest, Konfiguration in `pytest.ini`:
 
 ```powershell
-.\.venv-sidecar\Scripts\python.exe -m sidecar._smoke_merger    # rein synthetisch, keine Deps
-.\.venv-sidecar\Scripts\python.exe -m sidecar._smoke_store     # merger → SQLite → get_meeting
-.\.venv-sidecar\Scripts\python.exe -m sidecar._smoke_cleanup   # braucht laufendes Ollama
-.\.venv-sidecar\Scripts\python.exe -m sidecar._smoke_e2e       # braucht laufendes Ollama
+.\.venv-sidecar\Scripts\python.exe -m pytest            # 36 Tests, ~1,5 s
+.\.venv-sidecar\Scripts\python.exe -m pytest --slow     # + echte MP3 durch Whisper/pyannote
+.\.venv-sidecar\Scripts\python.exe -m pytest --ollama   # + Cleanup gegen lokales Ollama
+.\.venv-sidecar\Scripts\python.exe -m pytest -k merger  # einzelne Datei/Fall
 ```
 
-`_smoke_store`/`_smoke_e2e` setzen `APPDATA` auf ein Temp-Verzeichnis — die
-echte Meeting-DB bleibt unberührt. Für Rust und TypeScript gibt es **keine**
+Der Standardlauf ist absichtlich frei von Modellen, Ollama und Netz — teure
+Tests tragen `@pytest.mark.slow` / `.ollama` und werden ohne die Flags
+übersprungen (Mechanik in `tests/conftest.py`). Jeder Test bekommt über die
+`store`-Fixture eine eigene DB unter einem Temp-`APPDATA`; die echte
+Meeting-DB wird nie angefasst. Für Rust und TypeScript gibt es **keine**
 Tests (Stand 2026-07-23).
 
 **Release-Build:** Sidecar zuerst (`.venv-sidecar\Scripts\python.exe -m PyInstaller
@@ -200,7 +202,11 @@ Fachliche Trennung im Sidecar, die man kennen muss:
 - `meeting_pipeline.py`, `diarization.py`, `merger.py`, `meeting_store.py`,
   `audio_io.py` — Meeting-Pipeline (Import → Whisper+pyannote → Turns → SQLite).
 - `dictate.py`, `recording.py` — Diktat-Flow / Live-Aufnahme.
-- `_smoke_*.py` — die gesamte Testabdeckung des Projekts.
+
+**Tests** (`tests/`, pytest): `conftest.py` (isolierte DB je Test, Opt-in-Flags),
+`test_merger.py`, `test_store.py`, `test_migrations.py`, `test_export.py`,
+`test_rpc.py`; markiert und übersprungen: `test_pipeline_mp3.py` (`--slow`),
+`test_cleanup.py` (`--ollama`).
 
 **Tauri-App** (`app/`):
 - `src/` — React: `App.tsx`, `MiniWidget.tsx`, Views (`MeetingImport`,
@@ -234,6 +240,13 @@ Fachliche Trennung im Sidecar, die man kennen muss:
   kein Paket deklariert es als Dependency. Rausnehmen killt die Diarization.
   Steht mit Begründung in den requirements — Kommentar nicht wegkürzen.
 - **`pct` in `meeting.progress` ist 0..1**, nicht 0..100 — trotz des Namens.
+- **`created_at` hat nur Sekunden-Auflösung** (`_now_iso`). Deshalb sortiert
+  `list_meetings` mit `created_at DESC, rowid DESC` — beim Stapel-Import fällt
+  sonst alles in dieselbe Sekunde und die Reihenfolge wird beliebig. Wer eine
+  neue Abfrage nach Zeit schreibt, braucht denselben zweiten Schlüssel.
+- **Schema-Änderung = neue Migration.** `meeting_store._MIGRATIONS` ist eine
+  Liste nummerierter SQL-Schritte gegen `PRAGMA user_version`, forward-only.
+  Anleitung steht im Kommentar darüber; alte Schritte nie ändern.
 - **Diarization läuft absichtlich auf der CPU.** `BLITZTEXT_DIAR_CPU` steht per
   Default auf `1` (`sidecar/diarization.py:121`): torch+cu121 bringt unter
   Windows ein cuDNN mit fehlendem Symbol mit, das pyannote-Inferenz aus

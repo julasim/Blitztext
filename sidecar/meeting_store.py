@@ -20,8 +20,8 @@ Design notes
   persist this setting.
 - Speaker stats (word_count, duration_ms, share_pct) are denormalized on
   ingest so list/get reads don't need subqueries.
-- No migration framework yet; schema_version pragma + bespoke steps when
-  we need v2.
+- Migrationen: nummerierte SQL-Schritte gegen ``PRAGMA user_version``,
+  forward-only. Anleitung steht bei ``_MIGRATIONS``.
 """
 
 from __future__ import annotations
@@ -104,9 +104,44 @@ CREATE INDEX IF NOT EXISTS idx_turns_meeting_idx ON turns(meeting_id, idx);
 CREATE INDEX IF NOT EXISTS idx_speakers_meeting ON speakers(meeting_id);
 """
 
-_SCHEMA_VERSION = 1
+# --- Migrationen -----------------------------------------------------------
+#
+# Kein Alembic — nummerierte SQL-Schritte plus `PRAGMA user_version` als
+# Zähler. Beim Öffnen wird die Version gelesen und jeder Schritt mit höherer
+# Nummer genau einmal angewendet.
+#
+# NEUE MIGRATION HINZUFÜGEN:
+#   1. Tupel `(N, "SQL…")` unten anhängen, N = bisheriges Maximum + 1.
+#   2. SQL idempotent halten (`IF NOT EXISTS`), damit ein abgebrochener Lauf
+#      wiederholbar bleibt.
+#   3. Alte Schritte NIE ändern — bestehende DBs haben sie schon hinter sich.
+#      Forward-only.
+#
+# Schritt 1 ist das Ausgangsschema. Es läuft auch gegen DBs, die vor der
+# Einführung dieses Mechanismus entstanden sind: die tragen bereits
+# `user_version = 1` und werden deshalb übersprungen.
+
+_MIGRATIONS: tuple[tuple[int, str], ...] = (
+    (1, _SCHEMA_SQL),
+)
+
+_SCHEMA_VERSION = max(v for v, _ in _MIGRATIONS)
 
 _conn: sqlite3.Connection | None = None
+
+
+def _migrate(conn: sqlite3.Connection) -> int:
+    """Wendet ausstehende Migrationen an. Gibt die erreichte Version zurück."""
+    current = int(conn.execute("PRAGMA user_version;").fetchone()[0])
+    for version, sql in _MIGRATIONS:
+        if version <= current:
+            continue
+        conn.executescript(sql)
+        # PRAGMA nimmt keine Parameter-Bindung — der Wert kommt aus einer
+        # Konstante im Modul, nicht von außen.
+        conn.execute(f"PRAGMA user_version = {version};")
+        current = version
+    return current
 
 
 def _connect() -> sqlite3.Connection:
@@ -128,10 +163,14 @@ def _connect() -> sqlite3.Connection:
     )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION};")
-    conn.executescript(_SCHEMA_SQL)
+    _migrate(conn)
     _conn = conn
     return conn
+
+
+def schema_version() -> int:
+    """Aktuelle Schema-Version der geöffneten DB — für Diagnose/Tests."""
+    return int(_connect().execute("PRAGMA user_version;").fetchone()[0])
 
 
 def close() -> None:
@@ -259,11 +298,18 @@ def set_language(meeting_id: str, language: str) -> None:
 
 
 def list_meetings(limit: int = 100, offset: int = 0) -> list[dict]:
-    """Newest first. Returns MeetingListItem dicts (no speakers/turns)."""
+    """Newest first. Returns MeetingListItem dicts (no speakers/turns).
+
+    ``created_at`` hat nur Sekunden-Auflösung, deshalb der zweite
+    Sortierschlüssel: bei einem Stapel-Import fallen viele Meetings in
+    dieselbe Sekunde, und `ORDER BY created_at` allein liefert sie dann in
+    beliebiger Reihenfolge. ``rowid`` ist die Einfügereihenfolge und macht
+    die Sortierung eindeutig.
+    """
     conn = _connect()
     rows = conn.execute(
         "SELECT id, title, duration_ms, created_at, status "
-        "FROM meetings ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        "FROM meetings ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
         (int(limit), int(offset)),
     ).fetchall()
     return [dict(r) for r in rows]
