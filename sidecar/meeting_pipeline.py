@@ -33,6 +33,12 @@ from sidecar.diarization import DiarizationPipeline
 from sidecar.merger import merge, speaker_to_store_dict, turn_to_store_dict
 
 
+class _DiarizationSkipped(Exception):
+    """Interner Sprung: ``diarize=False`` nimmt denselben Ausgang wie ein
+    Diarization-Fehler — leere Segmentliste, der Merger macht daraus einen
+    Sprecher. Kein öffentlicher Fehlerfall, deshalb privat."""
+
+
 class PipelineCancelled(Exception):
     """Der Lauf wurde abgebrochen — kein Fehler.
 
@@ -206,9 +212,15 @@ def run_stages(
     max_speakers: int | None = None,
     on_event: Callable[[str, dict], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    diarize: bool = True,
 ) -> None:
     """Decode → transcribe → diarize → merge → persist for an existing
     meeting row. Does all the heavy lifting.
+
+    ``diarize=False`` überspringt pyannote. Der Merger kommt damit klar —
+    er erzeugt dann einen Sprecher und trennt an langen Pausen, denselben
+    Weg wie bei einem Diarization-Fehler. Spart rund 30 % der Laufzeit und
+    braucht keinen HF-Token; sinnvoll für Vorträge und Sprachnotizen.
 
     ``should_cancel`` wird an den Stage-Grenzen und nach jedem
     Whisper-Segment abgefragt; liefert es True, fliegt
@@ -280,6 +292,8 @@ def run_stages(
         diar_start = time.time()
         segments: list[dict] = []
         try:
+            if not diarize:
+                raise _DiarizationSkipped()
             pipeline = DiarizationPipeline.instance()
             segments = pipeline.diarize(
                 audio,
@@ -289,6 +303,8 @@ def run_stages(
                     on_event, meeting_id, "diarize", p
                 ),
             )
+        except _DiarizationSkipped:
+            pass
         except RuntimeError as e:
             # Surface as a non-fatal warning so the UI can show a banner.
             if on_event is not None:
@@ -349,11 +365,13 @@ def run_import(
     min_speakers: int | None = None,
     max_speakers: int | None = None,
     on_event: Callable[[str, dict], None] | None = None,
+    diarize: bool = True,
 ) -> str:
     """Convenience: create the shell + run all stages synchronously.
 
-    Used by smoke tests. The RPC layer uses ``create_meeting_shell`` +
-    ``run_stages`` directly so it can thread the heavy work off.
+    Benutzt von Tests und vom Benchmark. Die Warteschlange ruft
+    ``create_meeting_shell`` + ``run_stages`` getrennt auf, weil sie die
+    ``meeting_id`` sofort braucht.
     """
     meeting_id, model = create_meeting_shell(
         file_path, title=title, language=language, whisper_model=whisper_model
@@ -366,6 +384,7 @@ def run_import(
         min_speakers=min_speakers,
         max_speakers=max_speakers,
         on_event=on_event,
+        diarize=diarize,
     )
     return meeting_id
 

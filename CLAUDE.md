@@ -179,6 +179,14 @@ dann `cd app; npx tauri build` → MSI. Schritt für Schritt in `BUILD.md`.
 .\.venv-sidecar\Scripts\python.exe transcribe.py "C:\pfad\meeting.mp3" --cleanup
 ```
 
+**Qualität messen** (`benchmark/`, Details in `benchmark/README.md`):
+
+```powershell
+.\.venv-sidecar\Scripts\python.exe benchmark\run.py --selftest       # ohne eigenes Material
+.\.venv-sidecar\Scripts\python.exe benchmark\run.py --prepare <audio> # Referenz-Gerüst
+.\.venv-sidecar\Scripts\python.exe benchmark\run.py --label baseline   # messen
+```
+
 ---
 
 ## Der eine Datenpfad (wichtigste Architektur-Tatsache)
@@ -259,8 +267,11 @@ Was man über die Pipeline wissen muss:
   Ein Fenster, keine globalen Shortcuts.
 
 **Werkzeug & Doku:**
+- `benchmark/` — Messaufbau: WER und Sprecheranzahl gegen korrigierte
+  Referenzen (`run.py`, `metrics.py`, `reference.py`). Nicht im Paket.
+  `data/`, `results/`, `.work/` sind gitignored — dort liegen echte
+  Bauberatungen.
 - `transcribe.py` — CLI: eine Audiodatei durch die volle Pipeline → Markdown.
-  Einziger Batch-Einstieg, den es heute gibt.
 - `BUILD.md` — Release (PyInstaller-Sidecar + Tauri-MSI); `build-sidecar.spec`.
 - `PLAN.md` — Umbau-Roadmap (Phase 0–3). Öffnen bei jeder Architekturfrage.
 - `assets/` — Branding-SVGs.
@@ -315,6 +326,23 @@ Was man über die Pipeline wissen muss:
 
 ## Änderungslog
 
+- 2026-07-24 — **Messaufbau `benchmark/`.** Anlass: die Recherche zeigt
+  bessere Modelle (Qwen3-ASR, pyannote 4/community-1), aber alle Zahlen
+  stammen aus englischen Benchmarks — und pyannote 4 verlangt **torch ≥ 2.8**
+  gegen unsere 2.4.1+cu121. Ein Upgrade dieser Größe blind zu machen wäre
+  falsch, also erst messen. Referenzformat ist **unser eigener
+  Markdown-Export**, von Hand korrigiert: kein neues Format, das abdriften
+  kann, und korrigieren statt abtippen. WER selbst implementiert (Levenshtein
+  über Wortlisten, deutsche Normalisierung explizit, Zahlen bewusst **nicht**
+  normalisiert). Keine DER — unsere Referenz hat keine Ende-Zeitstempel, eine
+  geschätzte DER sähe präzise aus und wäre es nicht. Dazu `diarize=False` in
+  der Pipeline (misst, was die Sprechertrennung kostet; nutzt denselben
+  Fallback-Pfad wie ein pyannote-Fehler). 25 Unit-Tests; `--selftest` fährt
+  über die Windows-Sprachausgabe einen bekannten Satz durch die volle Kette
+  (WER 0,0 %, RTF 6,0). **Gefunden und behoben:** die erste Messung enthielt
+  das Modell-Laden (420 s für 9 s Audio) — jetzt Warmlauf vor der Messung;
+  und das umgebogene `APPDATA` duplizierte den Modell-Cache (2,9 GB), jetzt
+  Verzeichnis-Junction auf den echten.
 - 2026-07-23 — **Stapel-Import sichtbar gemacht.** `queue.enqueue` nimmt
   Dateien **und Ordner** (rekursiv, alphabetisch, mit `skipped`-Begründung je
   aussortiertem Pfad); die Endungsliste steht einmal in `audio_io` und kommt

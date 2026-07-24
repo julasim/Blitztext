@@ -22,6 +22,13 @@ app/src-tauri/target/
 app/.vite/
 app/*.log
 
+# Benchmark: echte Aufnahmen und ihre Auswertung. Das sind Bauberatungen —
+# die haben im Repo nichts verloren, auch nicht als Dateiname in einer
+# Ergebnisdatei. Code unter benchmark/ bleibt getrackt.
+benchmark/data/
+benchmark/results/
+benchmark/.work/
+
 # Gebündelter Sidecar (~4,8 GB PyInstaller-Output). Der Platzhalter bleibt
 # getrackt: fehlt der Ordner, bricht schon `cargo check` am Resource-Glob
 # aus tauri.conf.json — mit einer Meldung, die nach Config-Fehler aussieht.
