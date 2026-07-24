@@ -251,8 +251,9 @@ Was man über die Pipeline wissen muss:
 
 ## Datei-Landkarte
 
-**Python-Kern** (`core/`): `transcription.py` (Whisper), `llm.py`
-(Ollama-Cleanup), `log.py`. Mehr ist nicht drin.
+**Python-Kern** (`core/`): `transcription.py` (Whisper), `parakeet.py`
+(Parakeet über ONNX, Token→Wort + Fenster-Naht), `llm.py` (Ollama-Cleanup),
+`log.py`. Mehr ist nicht drin.
 
 **Sidecar** (`sidecar/` — das Backend):
 - `rpc.py` + `methods.py` — JSON-RPC-Dispatcher + Methoden; Contract in
@@ -339,6 +340,19 @@ Was man über die Pipeline wissen muss:
 
 ## Änderungslog
 
+- 2026-07-24 — **Parakeet TDT v3 als zweites ASR-Modell** (`core/parakeet.py`
+  über `onnx-asr`, bewusst CPU/ONNX — kein onnxruntime-gpu neben torch).
+  Auf dem Testsatz **genauer als Whisper large-v3** (mittleres WER 0,8 %
+  gegen 2,3 %; Fachbegriffe 2,3 % gegen 6,8 %) bei ~600 MB statt 3 GB.
+  Token→Wort-Konversion und 240-s-Fenster-Naht als reine, getestete
+  Funktionen. Engine-Dispatch über den Modellnamen in
+  `meeting_pipeline._get_transcriber`; `config.get` liefert `models`
+  ({id, label, hint}), der Import-View hat eine Modellwahl (Default
+  Automatik). Benchmark-Fund: ONNX optimiert beim ersten Aufruf —
+  `warm_up` schiebt jetzt 1 s Stille durchs Modell, sonst misst die erste
+  Datei 30 s statt 4 s. **Phase 3 (Cleanup-Modell) blockiert:** Ollama ist
+  auf dieser Maschine nicht installiert; erst installieren + Kandidaten
+  per `pytest --ollama` messen, dann `OLLAMA_LOCAL_DEFAULT_MODEL` anfassen.
 - 2026-07-24 — **Stack-Umstieg: torch 2.8+cu128 / pyannote 4.0.7 /
   community-1.** Über parallele venv gemessen, dann umgeschaltet (Neuaufbau
   aus dem pip-Cache statt Rename — EXE-Shims betten absolute Pfade ein).
