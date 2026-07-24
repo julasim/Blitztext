@@ -1,0 +1,37 @@
+# Blitztext Sidecar — Kandidaten-Stack (torch 2.8 + pyannote 4)
+#
+# Parallel-venv zum Messen, BEVOR umgeschaltet wird. Siehe CLAUDE.md
+# ("Modell-Stack erneuern") und benchmark/README.md.
+#
+# Install:
+#   python3.11 -m venv .venv-sidecar-next
+#   .venv-sidecar-next\Scripts\python.exe -m pip install -r sidecar/requirements-next.txt --index-url https://download.pytorch.org/whl/cu128 --extra-index-url https://pypi.org/simple
+#
+# Unterschiede zur requirements.txt (Stand torch 2.4 / pyannote 3.3):
+#   * torch/torchaudio >= 2.8 (Pflicht für pyannote 4), Index cu128
+#   * pyannote.audio >= 4 mit Modell speaker-diarization-community-1
+#   * Pin huggingface_hub<0.30 entfällt (4.x will >= 0.28.1)
+#   * Pin speechbrain<1.1 entfällt — pyannote 4 deklariert speechbrain
+#     nicht mehr. Fehlt es doch (lazy import), ungepinnt nachinstallieren.
+
+# --- Core runtime ---
+httpx>=0.27.0
+numpy>=1.24.0
+keyring>=25.0.0      # HuggingFace-Token im Windows-Credential-Manager
+
+# --- Transcription ---
+faster-whisper>=1.0.0   # bringt PyAV mit → dekodiert MP3/M4A/FLAC/OGG selbst
+soundfile>=0.12.1       # Audio-Ausschnitte (Sprecher-Hörproben)
+
+# --- Diarization ---
+pyannote.audio>=4.0,<5
+torch>=2.8,<2.9
+torchaudio>=2.8,<2.9
+# matplotlib: unter pyannote 3.x Modulebenen-Import (siehe requirements.txt).
+# Ob pyannote 4 ohne auskommt, wird NACH dem Umstieg geprüft — nicht jetzt
+# mit-riskieren.
+matplotlib>=3.7
+
+# --- Dev-only ---
+pyinstaller>=6.6.0
+pytest>=8.0

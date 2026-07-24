@@ -1,7 +1,12 @@
-"""pyannote.audio 3.x Wrapper.
+"""pyannote.audio Wrapper — läuft mit 3.3.x **und** 4.x.
 
 Holds a lazily-initialized pipeline, runs it on 16 kHz mono numpy audio,
 and returns a flat list of ``{start, end, speaker}`` segments in seconds.
+
+Versionsfest, weil der Umstieg auf pyannote 4 über eine **parallele venv**
+gemessen wird — dieselbe Codebasis muss in beiden laufen. Die drei
+Unterschiede (Modellname, token-kwarg, Ausgabeform) sind unten je an der
+Stelle behandelt, an der sie auftreten.
 
 Design notes
 ------------
@@ -26,8 +31,30 @@ from typing import Any, Callable
 import numpy as np
 
 
-DIAR_MODEL = "pyannote/speaker-diarization-3.1"
 SAMPLE_RATE = 16_000
+
+
+def _pyannote_major() -> int:
+    """Installierte pyannote.audio-Hauptversion; 3, wenn unbestimmbar."""
+    try:
+        from importlib.metadata import version
+
+        return int(version("pyannote.audio").split(".")[0])
+    except Exception:
+        return 3
+
+
+def diar_model_name() -> str:
+    """Je Version das passende Modell. community-1 verlangt pyannote 4;
+    umgekehrt kann 4.x das alte 3.1-Modell zwar laden, aber dann misst man
+    nicht das, was man vergleichen will."""
+    if _pyannote_major() >= 4:
+        return "pyannote/speaker-diarization-community-1"
+    return "pyannote/speaker-diarization-3.1"
+
+
+# Historischer Name, wird noch in Log-/Fehlertexten referenziert.
+DIAR_MODEL = diar_model_name()
 
 
 # -- HF token ---------------------------------------------------------------
@@ -79,38 +106,43 @@ class DiarizationPipeline:
         if self._pipeline is not None:
             return
 
+        model = diar_model_name()
         token = _get_hf_token()
         if not token:
             raise RuntimeError(
-                "Kein HuggingFace-Token. pyannote 3.x braucht einen "
-                "akzeptierten Lizenz-Zugang zu 'pyannote/speaker-diarization-3.1' "
-                "und 'pyannote/segmentation-3.0'. Bitte Token im Keyring unter "
-                "blitztext/hf_token ablegen oder HUGGINGFACE_HUB_TOKEN env setzen."
+                f"Kein HuggingFace-Token. pyannote braucht einen akzeptierten "
+                f"Lizenz-Zugang zu '{model}'. Bitte Token im Keyring unter "
+                f"Blitztext/hf_token ablegen oder HUGGINGFACE_HUB_TOKEN env setzen."
             )
 
         try:
             from pyannote.audio import Pipeline  # type: ignore
         except ImportError as e:
             raise RuntimeError(
-                "pyannote.audio ist nicht installiert. "
-                "pip install 'pyannote.audio==3.3.*'"
+                "pyannote.audio ist nicht installiert "
+                "(siehe sidecar/requirements.txt)."
             ) from e
 
-        # Newer huggingface_hub releases dropped the 'use_auth_token' kwarg
-        # but pyannote 3.3.x still tries to pass it through. Easiest robust
-        # fix: set the env var that hf_hub_download honours automatically.
+        # 3.3.x-Workaround: dortige huggingface_hub-Stände kennen das
+        # use_auth_token-Weiterreichen nicht mehr; die Env-Var greift
+        # immer. Unter 4.x wirkungslos, aber harmlos.
         os.environ.setdefault("HUGGINGFACE_HUB_TOKEN", token)
         os.environ.setdefault("HF_TOKEN", token)
 
         try:
             import torch  # type: ignore
 
+            # 4.x heißt der kwarg `token`, 3.x `use_auth_token`. Beide
+            # Richtungen über TypeError abfangen — so trägt der Code auch
+            # Zwischenversionen, die keinen von beiden mögen (dann greift
+            # die Env-Var von oben).
             try:
-                pipeline = Pipeline.from_pretrained(DIAR_MODEL, use_auth_token=token)
+                pipeline = Pipeline.from_pretrained(model, token=token)
             except TypeError:
-                # pyannote tries to forward use_auth_token to a function
-                # that no longer accepts it — call without and rely on env.
-                pipeline = Pipeline.from_pretrained(DIAR_MODEL)
+                try:
+                    pipeline = Pipeline.from_pretrained(model, use_auth_token=token)
+                except TypeError:
+                    pipeline = Pipeline.from_pretrained(model)
 
             # Decide device. Default: CUDA when available, but allow an
             # opt-out via BLITZTEXT_DIAR_CPU=1 because torch+cu121's bundled
@@ -213,14 +245,37 @@ class DiarizationPipeline:
         if on_progress:
             on_progress(1.0)
 
-        segments: list[dict] = []
-        for turn, _track, speaker in annotation.itertracks(yield_label=True):
-            segments.append(
-                {
-                    "start": float(turn.start),
-                    "end": float(turn.end),
-                    "speaker": str(speaker),
-                }
-            )
+        segments = _extract_segments(annotation)
         segments.sort(key=lambda s: s["start"])
         return segments
+
+
+def _extract_segments(output: Any) -> list[dict]:
+    """Diarization-Ausgabe in unsere flache Segmentliste übersetzen.
+
+    Drei Formen, absichtlich über die **Form** erkannt statt über die
+    Versionsnummer (überlebt auch Zwischenversionen):
+
+    * 4.x: Wrapper-Objekt mit ``.speaker_diarization`` — erst auspacken.
+    * ``Annotation`` (3.x, und evtl. auch das Ausgepackte): ``itertracks``
+      liefert 3-Tupel ``(turn, track, label)``.
+    * Direkt iterierbar mit 2-Tupeln ``(turn, speaker)`` — die Form aus dem
+      4.x-README.
+    """
+    if hasattr(output, "speaker_diarization"):
+        output = output.speaker_diarization
+
+    segments: list[dict] = []
+    if hasattr(output, "itertracks"):
+        for turn, _track, speaker in output.itertracks(yield_label=True):
+            segments.append(
+                {"start": float(turn.start), "end": float(turn.end), "speaker": str(speaker)}
+            )
+        return segments
+
+    for item in output:
+        turn, speaker = item[0], item[-1]
+        segments.append(
+            {"start": float(turn.start), "end": float(turn.end), "speaker": str(speaker)}
+        )
+    return segments

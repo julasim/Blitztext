@@ -198,6 +198,10 @@ def measure(audio: Path, reference_file: Path, run_result: dict) -> dict:
     speakers = compare_speakers(ref.speakers, run_result["speakers"])
     return {
         "file": audio.name,
+        # Synthetisches Material ist ein Regressionsmelder, kein
+        # Qualitätsurteil — das Flag verhindert, dass die Zahlen später
+        # als "gemessen auf echten Meetings" gelesen werden.
+        "synthetic": "synthetic" in str(audio).lower(),
         "wer": normalized.wer,
         "wer_raw": raw.wer,
         "wer_detail": normalized.as_dict(),

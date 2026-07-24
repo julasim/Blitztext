@@ -29,7 +29,7 @@ import numpy as np
 
 from core.transcription import Transcriber
 from sidecar import audio_io, meeting_store
-from sidecar.diarization import DiarizationPipeline
+from sidecar.diarization import DiarizationPipeline, diar_model_name
 from sidecar.merger import merge, speaker_to_store_dict, turn_to_store_dict
 
 
@@ -196,7 +196,7 @@ def create_meeting_shell(
         title=title or src.stem,
         language=language,
         whisper_model=whisper_model,
-        diar_model="pyannote/speaker-diarization-3.1",
+        diar_model=diar_model_name(),
         status="processing",
     )
     return meeting_id, whisper_model

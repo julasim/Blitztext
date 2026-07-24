@@ -45,8 +45,15 @@ class Transcriber:
         self._model: WhisperModel | None = None
 
         if models_dir is None:
-            appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
-            self._models_dir = os.path.join(appdata, "Blitztext", "models")
+            # BLITZTEXT_MODELS_DIR hat Vorrang: Tests und Benchmark biegen
+            # APPDATA auf Wegwerfverzeichnisse um — ohne diese Variable
+            # lädt dann jeder Lauf die Modelle (~3 GB) neu herunter.
+            override = os.environ.get("BLITZTEXT_MODELS_DIR")
+            if override:
+                self._models_dir = override
+            else:
+                appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+                self._models_dir = os.path.join(appdata, "Blitztext", "models")
         else:
             self._models_dir = models_dir
         os.makedirs(self._models_dir, exist_ok=True)

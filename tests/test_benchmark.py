@@ -191,3 +191,101 @@ def test_parser_leeres_dokument():
 def test_referenzpfad_neben_der_audiodatei():
     p = reference_path_for("C:/x/besprechung.mp3")
     assert p.name == "besprechung.reference.md"
+
+
+# --- Diarization-Ausgabe (versionsfest) --------------------------------------
+
+
+class _Turn:
+    def __init__(self, start: float, end: float):
+        self.start, self.end = start, end
+
+
+def test_extract_segments_3x_itertracks():
+    """pyannote 3.x: Annotation mit itertracks → 3-Tupel."""
+    from sidecar.diarization import _extract_segments
+
+    class FakeAnnotation:
+        def itertracks(self, yield_label: bool = False):
+            yield _Turn(0.0, 2.0), "A", "SPEAKER_00"
+            yield _Turn(2.5, 4.0), "B", "SPEAKER_01"
+
+    segs = _extract_segments(FakeAnnotation())
+
+    assert segs == [
+        {"start": 0.0, "end": 2.0, "speaker": "SPEAKER_00"},
+        {"start": 2.5, "end": 4.0, "speaker": "SPEAKER_01"},
+    ]
+
+
+def test_extract_segments_4x_wrapper_mit_annotation():
+    """pyannote 4.x: Wrapper-Objekt, dessen speaker_diarization eine
+    Annotation ist — auspacken, dann itertracks."""
+    from sidecar.diarization import _extract_segments
+
+    class FakeAnnotation:
+        def itertracks(self, yield_label: bool = False):
+            yield _Turn(1.0, 3.0), "A", "SPEAKER_00"
+
+    class FakeOutput:
+        speaker_diarization = FakeAnnotation()
+
+    segs = _extract_segments(FakeOutput())
+
+    assert segs == [{"start": 1.0, "end": 3.0, "speaker": "SPEAKER_00"}]
+
+
+def test_extract_segments_4x_direkt_iterierbar():
+    """Die README-Form: direkt iterierbar mit 2-Tupeln."""
+    from sidecar.diarization import _extract_segments
+
+    class FakeOutput:
+        speaker_diarization = [
+            (_Turn(0.0, 1.5), "SPEAKER_00"),
+            (_Turn(2.0, 3.0), "SPEAKER_01"),
+        ]
+
+    segs = _extract_segments(FakeOutput())
+
+    assert [s["speaker"] for s in segs] == ["SPEAKER_00", "SPEAKER_01"]
+    assert segs[0]["end"] == 1.5
+
+
+# --- Modell-Cache-Umleitung -------------------------------------------------
+
+
+def test_models_dir_override_hat_vorrang(tmp_path, monkeypatch):
+    """BLITZTEXT_MODELS_DIR muss das APPDATA-Derivat schlagen — sonst lädt
+    jeder isolierte Testlauf die Whisper-Gewichte (~3 GB) neu herunter."""
+    from core.transcription import Transcriber
+
+    override = tmp_path / "geteilter-cache"
+    monkeypatch.setenv("APPDATA", str(tmp_path / "wegwerf"))
+    monkeypatch.setenv("BLITZTEXT_MODELS_DIR", str(override))
+
+    t = Transcriber(model_size="tiny")
+
+    assert t._models_dir == str(override)
+    assert override.is_dir(), "Verzeichnis muss angelegt werden"
+
+
+def test_ohne_override_gilt_appdata(tmp_path, monkeypatch):
+    from core.transcription import Transcriber
+
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.delenv("BLITZTEXT_MODELS_DIR", raising=False)
+
+    t = Transcriber(model_size="tiny")
+
+    assert t._models_dir == str(tmp_path / "Blitztext" / "models")
+
+
+def test_explizites_models_dir_schlaegt_alles(tmp_path, monkeypatch):
+    from core.transcription import Transcriber
+
+    monkeypatch.setenv("BLITZTEXT_MODELS_DIR", str(tmp_path / "env"))
+    explicit = tmp_path / "explizit"
+
+    t = Transcriber(model_size="tiny", models_dir=str(explicit))
+
+    assert t._models_dir == str(explicit)

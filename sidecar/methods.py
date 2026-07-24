@@ -481,8 +481,12 @@ def settings_set_hf_token(token: str) -> dict:
 def settings_test_hf_token() -> dict:
     """Probe HF with the stored token: auth + gated-repo access.
 
-    The UI uses this to render a green/yellow/red status; without it the
-    only feedback is a failed import 30 minutes in.
+    Probt **beide** Diarization-Repos (3.1 und community-1) getrennt.
+    Grund: community-1 ist eigenständig gated — wer nur die alten
+    Bedingungen akzeptiert hat, sieht sonst einen grünen Check, während
+    der Import unter pyannote 4 still auf einen Sprecher degradiert.
+    Das ``repos``-Feld sagt der UI, welches Modell zugänglich ist; für
+    ``ok`` zählt das Repo der **installierten** pyannote-Version.
     """
     import keyring
 
@@ -506,23 +510,33 @@ def settings_test_hf_token() -> dict:
     except Exception as e:
         return {"ok": False, "stage": "auth", "message": f"Token ungültig: {e}"}
 
-    # Gated-repo probe: try to fetch a small file from a known gated model.
-    try:
-        hf_hub_download(
-            repo_id="pyannote/speaker-diarization-3.1",
-            filename="config.yaml",
-            token=tok,
-        )
-    except Exception as e:
+    from sidecar.diarization import diar_model_name
+
+    probed = {}
+    for repo_id in (
+        "pyannote/speaker-diarization-3.1",
+        "pyannote/speaker-diarization-community-1",
+    ):
+        try:
+            hf_hub_download(repo_id=repo_id, filename="config.yaml", token=tok)
+            probed[repo_id] = True
+        except Exception:
+            probed[repo_id] = False
+
+    active_model = diar_model_name()
+    active_ok = probed.get(active_model, False)
+
+    if not active_ok:
         return {
             "ok": False,
             "stage": "gated",
             "user": user_name,
+            "repos": probed,
             "message": (
-                "Token authentifiziert, aber keine Gated-Repo-Zugriffsrechte. "
-                "Token unter huggingface.co/settings/tokens bearbeiten und "
-                "'Read access to contents of all public gated repos you can "
-                f"access' aktivieren. Detail: {e}"
+                f"Token authentifiziert, aber kein Zugriff auf '{active_model}' — "
+                f"das Modell der installierten pyannote-Version. Auf "
+                f"huggingface.co die Bedingungen dieses Repos akzeptieren und "
+                f"beim Token 'Read access to public gated repos' aktivieren."
             ),
         }
 
@@ -530,5 +544,6 @@ def settings_test_hf_token() -> dict:
         "ok": True,
         "stage": "ready",
         "user": user_name,
-        "message": f"Eingeloggt als {user_name}, Gated-Zugriff bestätigt.",
+        "repos": probed,
+        "message": f"Eingeloggt als {user_name}, Zugriff auf {active_model} bestätigt.",
     }

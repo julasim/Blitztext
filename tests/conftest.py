@@ -8,6 +8,7 @@ werden, sonst schleppt der zweite Test die DB des ersten mit.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -49,10 +50,22 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    """Frische, isolierte Meeting-DB. Gibt das ``meeting_store``-Modul zurück."""
+    """Frische, isolierte Meeting-DB. Gibt das ``meeting_store``-Modul zurück.
+
+    DB und Meeting-Ordner sind je Test isoliert (APPDATA → tmp_path). Der
+    **Modell-Cache** wird dagegen geteilt, wenn es ihn gibt: ohne das lädt
+    jeder --slow-Lauf die Whisper-Gewichte (~3 GB) in ein
+    Wegwerfverzeichnis — die 313 s der frühen Läufe waren zur Hälfte
+    Download.
+    """
     from sidecar import meeting_store
 
+    real_appdata = os.environ.get("APPDATA")
     monkeypatch.setenv("APPDATA", str(tmp_path))
+    if real_appdata:
+        real_models = Path(real_appdata) / "Blitztext" / "models"
+        if real_models.is_dir():
+            monkeypatch.setenv("BLITZTEXT_MODELS_DIR", str(real_models))
     meeting_store.close()  # eventuell offene Verbindung aus einem Vortest
     meeting_store.init_db()
     yield meeting_store
