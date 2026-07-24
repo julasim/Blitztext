@@ -115,7 +115,7 @@ Warteschlange, höchstens zweimal; danach `failed`.
 |---|---|---|---|
 | ✅ | `settings.get` | — | `{hf_token_present, hf_token_hint, whisper_default, ollama_default}` |
 | ✅ | `settings.set_hf_token` | `{token}` | `{ok, stored}` — leerer String löscht die Credential |
-| ✅ | `settings.test_hf_token` | — | `{ok, stage, user?, message}`, `stage ∈ {missing, deps, auth, gated, ready}` |
+| ✅ | `settings.test_hf_token` | — | `{ok, stage, user?, repos?, message}`, `stage ∈ {missing, deps, auth, gated, ready}`. `repos` = Zugriff je gated Diarization-Repo (3.1 **und** community-1); `ok` richtet sich nach dem Repo der installierten pyannote-Version |
 
 Der HF-Token liegt im Windows-Anmeldeinformationsmanager (`keyring`, Dienst
 `Blitztext`, Key `hf_token`) — nie in einer Datei, nie im Klartext an die UI.

@@ -5,7 +5,8 @@ __pycache__/
 *$py.class
 *.egg-info/
 .venv/
-.venv-sidecar/
+# auch -old (Rückfall-venv nach Stack-Wechseln) und -next (Parallel-Aufbau)
+.venv-sidecar*/
 venv/
 env/
 

@@ -28,11 +28,16 @@ Untertitel-Exports. Siehe „Offene Punkte".
 keinen Zugang zu Cloud-Modellen und soll keinen geben.
 
 - **Whisper** (`faster-whisper`) — lokal, GPU oder CPU.
-- **pyannote** — lokal, CPU (siehe Stolpersteine).
+- **pyannote 4 / community-1** — lokal, GPU (seit torch 2.8; Details in
+  den Stolpersteinen).
 - **Ollama** für den Cleanup — `127.0.0.1:11434`, also Loopback.
 
 Der Code enthält **keine API-Keys, keinen Inferenz-Endpunkt, keine
-Telemetrie**. Die fünf Cloud-Provider (OpenAI, Anthropic, Gemini, OpenRouter,
+Telemetrie**. Achtung dabei: **pyannote 4 bringt eigene Opt-out-Telemetrie
+mit, per Default AN** (`otel.pyannote.ai`, plus mitinstalliertem
+`pyannoteai-sdk`). `sidecar/diarization.py` setzt
+`PYANNOTE_METRICS_ENABLED=false`, **bevor** pyannote importiert wird — beim
+Anfassen dieser Stelle nicht hinter den Import rutschen lassen. Die fünf Cloud-Provider (OpenAI, Anthropic, Gemini, OpenRouter,
 Ollama-Cloud) hingen am PyQt-Tray und sind am 2026-07-23 mit ihm gelöscht
 worden; `core/llm.py` kennt nur noch `_call_ollama_local`.
 
@@ -40,9 +45,11 @@ Ausgehende Verbindungen gibt es an genau zwei Stellen, beide **einmalige
 Modell-Downloads**, danach läuft alles offline:
 
 1. `core/transcription.py` → `huggingface.co`, lädt die Whisper-Gewichte nach
-   `%APPDATA%\Blitztext\models`.
-2. `huggingface_hub` (über pyannote) → das Diarization-Modell. Gated, deshalb
-   der HF-Token. Die Methode `settings.test_hf_token` prüft ihn auf Knopfdruck.
+   `%APPDATA%\Blitztext\models` (bzw. `BLITZTEXT_MODELS_DIR`).
+2. `huggingface_hub` (über pyannote) → das Diarization-Modell
+   `speaker-diarization-community-1`. Gated, deshalb der HF-Token; die
+   Bedingungen des Repos müssen auf HF akzeptiert sein (erledigt
+   2026-07-24). `settings.test_hf_token` prüft beide Repos auf Knopfdruck.
 
 Wer eine Cloud-Anbindung ergänzen will, ändert damit den Produktkern —
 das ist keine Implementierungsdetail-Entscheidung.
@@ -130,8 +137,9 @@ plus CUDA-Verifikation.
   es war schon einmal drei Namensräume hinterher).
 - venv-Installation immer mit CUDA-Index:
   `python3.11 -m venv .venv-sidecar` und
-  `pip install -r sidecar\requirements.txt --index-url https://download.pytorch.org/whl/cu121 --extra-index-url https://pypi.org/simple`
-  (kein `py`-Launcher auf dieser Maschine).
+  `.venv-sidecar\Scripts\python.exe -m pip install -r sidecar\requirements.txt --index-url https://download.pytorch.org/whl/cu128 --extra-index-url https://pypi.org/simple`
+  (kein `py`-Launcher auf dieser Maschine; immer `python -m pip`, nie die
+  EXE-Shims — die überleben kein Verschieben der venv).
 
 ## Befehle
 
@@ -298,11 +306,16 @@ Was man über die Pipeline wissen muss:
 - **Schema-Änderung = neue Migration.** `meeting_store._MIGRATIONS` ist eine
   Liste nummerierter SQL-Schritte gegen `PRAGMA user_version`, forward-only.
   Anleitung steht im Kommentar darüber; alte Schritte nie ändern.
-- **Diarization läuft absichtlich auf der CPU.** `BLITZTEXT_DIAR_CPU` steht per
-  Default auf `1` (`sidecar/diarization.py:121`): torch+cu121 bringt unter
-  Windows ein cuDNN mit fehlendem Symbol mit, das pyannote-Inferenz aus
-  nativem Code heraus killt — unfangbar für Python. Whisper behält die GPU.
-  `device = cpu` beim Laden ist also **kein** Defekt.
+- **Diarization-Gerät ist versionsgekoppelt** (`sidecar/diarization.py`):
+  unter pyannote 3.x/torch 2.4 erzwingt der Default CPU (cuDNN-Symbolfehler
+  killt die Inferenz aus nativem Code, unfangbar); unter pyannote 4/torch 2.8
+  ist der Fehler behoben (verifiziert 2026-07-24, 31 s Audio in 1,9 s auf der
+  4060) und der Default ist GPU. `BLITZTEXT_DIAR_CPU` überstimmt beide.
+- **Die torchcodec-Warnung beim pyannote-4-Import ist harmlos und laut.**
+  torchcodec findet ohne System-FFmpeg seine DLLs nicht; pyannote bräuchte es
+  nur für Datei-I/O. Wir übergeben In-Memory-Tensoren — exakt der von der
+  Warnung selbst empfohlene Weg. Nicht „reparieren", nicht ffmpeg
+  installieren.
 - **Abbruch greift nicht während der Diarization.** Prüfpunkte gibt es an den
   Stage-Grenzen und nach jedem Whisper-Segment; pyannote meldet keinen
   Fortschritt, also wartet ein Abbruch dort, bis sie fertig ist. Bewusst so
@@ -326,6 +339,20 @@ Was man über die Pipeline wissen muss:
 
 ## Änderungslog
 
+- 2026-07-24 — **Stack-Umstieg: torch 2.8+cu128 / pyannote 4.0.7 /
+  community-1.** Über parallele venv gemessen, dann umgeschaltet (Neuaufbau
+  aus dem pip-Cache statt Rename — EXE-Shims betten absolute Pfade ein).
+  Messung auf dem synthetischen Testsatz: WER und Sprecherzahl identisch
+  zur Baseline, Laufzeit **2,6–5× schneller**, weil der cuDNN-Fehler von
+  cu121 behoben ist und die **Diarization wieder auf der GPU** läuft
+  (31 s Audio in 1,9 s). Geräteswahl jetzt versionsgekoppelt. Drei Funde:
+  pyannote 4 bringt **Opt-out-Telemetrie, Default AN** (otel.pyannote.ai) —
+  abgeschaltet via `PYANNOTE_METRICS_ENABLED=false` vor dem Import;
+  speechbrain ist komplett entfallen (keine lazy Imports, Pin gestrichen);
+  die laute torchcodec-Warnung ist harmlos (wir übergeben In-Memory-
+  Tensoren). `.venv-sidecar-old` (torch 2.4) bleibt als Rückfall, bis
+  echtes Material gemessen ist. `settings.test_hf_token` probt beide
+  gated Repos.
 - 2026-07-24 — **Messaufbau `benchmark/`.** Anlass: die Recherche zeigt
   bessere Modelle (Qwen3-ASR, pyannote 4/community-1), aber alle Zahlen
   stammen aus englischen Benchmarks — und pyannote 4 verlangt **torch ≥ 2.8**

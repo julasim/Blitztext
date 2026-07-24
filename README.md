@@ -37,8 +37,8 @@ ein HuggingFace-Account mit akzeptierten pyannote-Lizenzen. Details in
 ```powershell
 # Python-Sidecar (CUDA-Index ist Pflicht, sonst kommt Torch ohne GPU-Support)
 python3.11 -m venv .venv-sidecar
-.\.venv-sidecar\Scripts\pip install -r sidecar\requirements.txt `
-  --index-url https://download.pytorch.org/whl/cu121 `
+.\.venv-sidecar\Scripts\python.exe -m pip install -r sidecar\requirements.txt `
+  --index-url https://download.pytorch.org/whl/cu128 `
   --extra-index-url https://pypi.org/simple
 
 # Frontend + Tauri

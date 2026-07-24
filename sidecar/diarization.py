@@ -115,6 +115,13 @@ class DiarizationPipeline:
                 f"Blitztext/hf_token ablegen oder HUGGINGFACE_HUB_TOKEN env setzen."
             )
 
+        # pyannote 4 bringt Opt-out-Telemetrie mit, per Default AN
+        # (Endpunkt otel.pyannote.ai, Session-ID je Prozess). Blitztext
+        # sendet nichts nach außen — abschalten, BEVOR pyannote lädt,
+        # denn das Telemetrie-Modul liest die Variable beim Import.
+        # setdefault: eine bewusst gesetzte Umgebung gewinnt.
+        os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
+
         try:
             from pyannote.audio import Pipeline  # type: ignore
         except ImportError as e:
@@ -144,13 +151,17 @@ class DiarizationPipeline:
                 except TypeError:
                     pipeline = Pipeline.from_pretrained(model)
 
-            # Decide device. Default: CUDA when available, but allow an
-            # opt-out via BLITZTEXT_DIAR_CPU=1 because torch+cu121's bundled
-            # cuDNN on Windows has a missing symbol (cudnnGetLibConfig)
-            # that crashes pyannote inference unrecoverably (the error is
-            # logged from native code and kills the process before Python
-            # can catch it). CPU is slower but reliable. Whisper keeps GPU.
-            force_cpu = os.environ.get("BLITZTEXT_DIAR_CPU", "1") == "1"
+            # Geräteswahl, versionsgekoppelt:
+            # * pyannote 3.x lief auf torch 2.4+cu121 — dessen cuDNN hat
+            #   unter Windows ein fehlendes Symbol (cudnnGetLibConfig), das
+            #   die Inferenz aus nativem Code heraus killt, unfangbar für
+            #   Python. Default dort: CPU.
+            # * Unter pyannote 4 / torch 2.8+cu128 ist der Fehler behoben
+            #   (verifiziert 2026-07-24: 31 s Audio in 1,9 s auf der 4060).
+            #   Default dort: GPU.
+            # BLITZTEXT_DIAR_CPU überstimmt in beide Richtungen.
+            default_cpu = "1" if _pyannote_major() < 4 else "0"
+            force_cpu = os.environ.get("BLITZTEXT_DIAR_CPU", default_cpu) == "1"
             if torch.cuda.is_available() and not force_cpu:
                 pipeline.to(torch.device("cuda"))
                 self._device = "cuda"

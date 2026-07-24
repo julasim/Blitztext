@@ -1,15 +1,16 @@
 # Blitztext Sidecar — Python dependencies
 #
-# Target Python: 3.11 (pyannote.audio 3.x + torch 2.4 are stabilized on 3.11;
-# Python 3.14 has no torch wheels yet as of 2026-04).
+# Target Python: 3.11. Stack seit 2026-07-24: torch 2.8 (cu128) +
+# pyannote.audio 4 mit Modell speaker-diarization-community-1. Gegen den
+# Vorgänger (torch 2.4/pyannote 3.3) auf dem synthetischen Testsatz
+# gemessen: gleiche Qualität, 2,6–5× schneller (GPU-Diarization läuft
+# wieder — der cuDNN-Fehler von cu121 ist mit cu128 behoben).
 #
 # Install:
-#   py -3.11 -m venv .venv-sidecar
-#   .venv-sidecar\Scripts\activate
-#   pip install --upgrade pip
-#   pip install -r sidecar/requirements.txt --index-url https://download.pytorch.org/whl/cu121 --extra-index-url https://pypi.org/simple
+#   python3.11 -m venv .venv-sidecar
+#   .venv-sidecar\Scripts\python.exe -m pip install -r sidecar/requirements.txt --index-url https://download.pytorch.org/whl/cu128 --extra-index-url https://pypi.org/simple
 
-# --- Core runtime (sidecar stub can run on anything ≥3.9) ---
+# --- Core runtime ---
 httpx>=0.27.0
 numpy>=1.24.0
 keyring>=25.0.0      # HuggingFace-Token im Windows-Credential-Manager
@@ -18,20 +19,24 @@ keyring>=25.0.0      # HuggingFace-Token im Windows-Credential-Manager
 faster-whisper>=1.0.0   # bringt PyAV mit → dekodiert MP3/M4A/FLAC/OGG selbst
 soundfile>=0.12.1       # Audio-Ausschnitte (Sprecher-Hörproben)
 
-# --- Diarization (heavy; requires HF token for gated models) ---
-pyannote.audio>=3.3.0,<3.4.0
-torch>=2.4.0,<2.5.0
-torchaudio>=2.4.0,<2.5.0
-# Pinned deps below: pyannote 3.3.x has runtime conflicts with newer
-# huggingface_hub (1.x dropped use_auth_token kwarg) and newer
-# speechbrain (1.1+ has a lazy k2_fsa import that pyannote tickles).
-huggingface_hub>=0.25,<0.30
-speechbrain>=1.0,<1.1
-# matplotlib sieht nach Plot-Leiche aus und ist keine: pyannote importiert es
-# auf MODULEBENE (pyannote/audio/tasks/segmentation/speaker_diarization.py,
-# mixins.py). Kein Paket deklariert es als Dependency, deshalb muss es hier
-# stehen — rausnehmen killt den Diarization-Import. Nicht "aufräumen".
+# --- Diarization ---
+# pyannote 4 bringt Opt-out-Telemetrie mit (Default AN, otel.pyannote.ai).
+# sidecar/diarization.py schaltet sie VOR dem Import ab — beim Anfassen
+# dieser Stelle nicht dahinter rutschen lassen.
+pyannote.audio>=4.0,<5
+torch>=2.8,<2.9
+torchaudio>=2.8,<2.9
+# matplotlib war unter pyannote 3.x ein Modulebenen-Import (Plot-Leiche,
+# die keine war). Ob pyannote 4 ohne auskommt, ist noch nicht verifiziert —
+# erst prüfen, dann entfernen.
 matplotlib>=3.7
+
+# Historische Pins, seit pyannote 4 obsolet (dokumentiert, damit sie
+# niemand "zur Sicherheit" wieder einführt):
+#   huggingface_hub<0.30  → 4.x verlangt >=0.28.1 und nutzt token= nativ
+#   speechbrain<1.1       → 4.x deklariert speechbrain nicht mehr; in der
+#                           venv ist es nicht installiert, keine lazy Imports
+#                           (verifiziert 2026-07-24)
 
 # --- Dev-only ---
 pyinstaller>=6.6.0
