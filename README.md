@@ -2,7 +2,12 @@
 
 Transkribiert Audiodateien lokal auf Windows — MP3, WAV, M4A, FLAC, OGG.
 Mit Sprecher-Trennung, optionalem LLM-Cleanup und Markdown-Export.
-Alles on-device: kein Cloud-Dienst, keine offenen Ports, kein Mikrofonzugriff.
+
+**Ausschließlich lokale Modelle.** Whisper und pyannote laufen auf dem
+Rechner, der Cleanup gegen Ollama auf `127.0.0.1`. Keine Cloud-Modelle, keine
+API-Keys, keine Telemetrie, keine offenen Ports, kein Mikrofonzugriff. Ins
+Netz geht die App nur, um die Modelle **einmal herunterzuladen** — danach
+arbeitet sie offline.
 
 ## Repository-Struktur
 

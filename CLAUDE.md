@@ -22,6 +22,31 @@ Live-Mitschnitt sind entfernt — die App fasst kein Mikrofon mehr an. Was
 ausgebaut wird: Batch-Queue, Sprach-/Modellwahl beim Import,
 Untertitel-Exports. Siehe „Offene Punkte".
 
+## Grundsatz: ausschließlich lokale Modelle
+
+**Transkribiert wird nur mit Modellen, die auf dem Rechner laufen.** Es gibt
+keinen Zugang zu Cloud-Modellen und soll keinen geben.
+
+- **Whisper** (`faster-whisper`) — lokal, GPU oder CPU.
+- **pyannote** — lokal, CPU (siehe Stolpersteine).
+- **Ollama** für den Cleanup — `127.0.0.1:11434`, also Loopback.
+
+Der Code enthält **keine API-Keys, keinen Inferenz-Endpunkt, keine
+Telemetrie**. Die fünf Cloud-Provider (OpenAI, Anthropic, Gemini, OpenRouter,
+Ollama-Cloud) hingen am PyQt-Tray und sind am 2026-07-23 mit ihm gelöscht
+worden; `core/llm.py` kennt nur noch `_call_ollama_local`.
+
+Ausgehende Verbindungen gibt es an genau zwei Stellen, beide **einmalige
+Modell-Downloads**, danach läuft alles offline:
+
+1. `core/transcription.py` → `huggingface.co`, lädt die Whisper-Gewichte nach
+   `%APPDATA%\Blitztext\models`.
+2. `huggingface_hub` (über pyannote) → das Diarization-Modell. Gated, deshalb
+   der HF-Token. Die Methode `settings.test_hf_token` prüft ihn auf Knopfdruck.
+
+Wer eine Cloud-Anbindung ergänzen will, ändert damit den Produktkern —
+das ist keine Implementierungsdetail-Entscheidung.
+
 ## Status
 
 **Architektur:**

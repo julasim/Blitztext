@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import shutil
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Callable
 
@@ -82,7 +83,15 @@ def _emit(
 
 # --- Model caching ---------------------------------------------------------
 
-_transcriber_cache: dict[str, Transcriber] = {}
+# Ein geladenes Whisper-Modell belegt je nach Größe mehrere GB im VRAM.
+# Solange die Oberfläche kein Modell zur Wahl stellte, lag hier genau ein
+# Eintrag; sobald sie es tut, würden sich large-v3, turbo und medium
+# nebeneinander stapeln. Deshalb ein harter Deckel statt eines Caches, der
+# nur wächst: Modellwechsel sind selten, ein Neuladen kostet Sekunden, ein
+# volles VRAM kostet den Import.
+_TRANSCRIBER_CACHE_SIZE = 1
+
+_transcriber_cache: "OrderedDict[str, Transcriber]" = OrderedDict()
 
 
 def _pick_device_for_whisper() -> tuple[str, str]:
@@ -102,19 +111,41 @@ def _pick_device_for_whisper() -> tuple[str, str]:
     return "cpu", "int8"
 
 
+def _release_vram() -> None:
+    """Freigegebene Modelle aus dem VRAM räumen. Ohne das bleibt der
+    Speicher belegt, bis der Prozess endet — beim Modellwechsel mitten in
+    einem Stapel wäre das genau der falsche Moment."""
+    try:
+        import torch  # type: ignore
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
 def _get_transcriber(model: str, language: str) -> Transcriber:
     device, compute_type = _pick_device_for_whisper()
     key = f"{model}:{language}:{device}"
-    t = _transcriber_cache.get(key)
-    if t is None:
-        t = Transcriber(
-            model_size=model,
-            language=language,
-            device=device,
-            compute_type=compute_type,
-        )
-        t.load()
-        _transcriber_cache[key] = t
+
+    cached = _transcriber_cache.get(key)
+    if cached is not None:
+        _transcriber_cache.move_to_end(key)
+        return cached
+
+    t = Transcriber(
+        model_size=model,
+        language=language,
+        device=device,
+        compute_type=compute_type,
+    )
+    t.load()
+    _transcriber_cache[key] = t
+
+    while len(_transcriber_cache) > _TRANSCRIBER_CACHE_SIZE:
+        old_key, _old = _transcriber_cache.popitem(last=False)
+        _release_vram()
+
     return t
 
 
