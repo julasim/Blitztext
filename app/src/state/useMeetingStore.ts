@@ -30,6 +30,12 @@ type View =
   | { name: "review"; meetingId: string }
   | { name: "settings" };
 
+export type ModelChoice = {
+  id: string;
+  label: string;
+  hint: string;
+};
+
 type Config = {
   appdata: string;
   models_dir: string;
@@ -37,6 +43,8 @@ type Config = {
   db_path: string;
   cuda_available: boolean;
   ollama_available: boolean;
+  /** Wählbare ASR-Modelle — `id` geht als whisper_model durch die Queue. */
+  models: ModelChoice[];
   whisper_models: string[];
   /** Vom Sidecar gepflegt — der Dateidialog führt keine eigene Liste. */
   audio_extensions: string[];
@@ -84,7 +92,10 @@ export type State = {
   // die Liste neu, sobald ein queue.*-Event kommt, statt lokal mitzuzählen.
   jobs: Job[];
   loadJobs: () => Promise<void>;
-  enqueue: (paths: string[]) => Promise<{ count: number; skipped: SkippedPath[] }>;
+  enqueue: (
+    paths: string[],
+    options?: { whisper_model?: string; language?: string },
+  ) => Promise<{ count: number; skipped: SkippedPath[] }>;
   cancelJob: (jobId: string) => Promise<void>;
   clearFinishedJobs: () => Promise<void>;
 
@@ -230,10 +241,10 @@ export const useMeetingStore = create<State>((set, get) => ({
       console.warn("[queue.list] failed:", e);
     }
   },
-  async enqueue(paths) {
+  async enqueue(paths, options) {
     const res = await call<{ count: number; skipped: SkippedPath[] }>(
       "queue.enqueue",
-      { paths },
+      { paths, ...options },
     );
     await Promise.all([get().loadJobs(), get().loadMeetings()]);
     return res;

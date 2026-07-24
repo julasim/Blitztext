@@ -46,13 +46,40 @@ def _cuda_available() -> bool:
 def config_get() -> dict:
     from sidecar.audio_io import AUDIO_EXTENSIONS
 
+    cuda = _cuda_available()
     return {
         "appdata": str(meeting_store.appdata_dir()),
         "models_dir": str(meeting_store.appdata_dir() / "models"),
         "meetings_dir": str(meeting_store.meetings_dir()),
         "db_path": str(meeting_store.db_path()),
-        "cuda_available": _cuda_available(),
+        "cuda_available": cuda,
         "ollama_available": _ollama_available(),
+        # Für die Modellwahl im Import. `id` geht als whisper_model durch
+        # die Queue; der Engine-Dispatch sitzt in meeting_pipeline.
+        "models": [
+            {
+                "id": "large-v3",
+                "label": "Whisper large-v3",
+                "hint": "höchste Genauigkeit" + ("" if cuda else " — ohne GPU langsam"),
+            },
+            {
+                "id": "large-v3-turbo",
+                "label": "Whisper turbo",
+                "hint": "fast so genau, deutlich schneller",
+            },
+            {
+                "id": "parakeet-tdt-0.6b-v3",
+                "label": "Parakeet v3",
+                "hint": "am schnellsten (CPU), 25 europäische Sprachen, erkennt Sprache selbst",
+            },
+            {
+                "id": "medium",
+                "label": "Whisper medium",
+                "hint": "Kompromiss für Rechner ohne GPU",
+            },
+        ],
+        # Alte flache Liste — der TS-Spiegel kennt sie noch; entfernen,
+        # sobald kein Frontend-Stand mehr darauf liest.
         "whisper_models": ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"],
         # Eine Wahrheit für Dateidialog, Drag&Drop und Ordner-Import.
         "audio_extensions": list(AUDIO_EXTENSIONS),

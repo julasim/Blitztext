@@ -124,17 +124,23 @@ def environment() -> dict:
 
 
 def warm_up(model: str | None, language: str) -> float:
-    """Modell laden, bevor gemessen wird. Gibt die Ladezeit zurück.
+    """Modell laden UND einmal aufrufen, bevor gemessen wird.
 
-    Ohne das zahlt die **erste** Datei jedes Laufs das Modell-Laden mit —
-    beim Selbsttest waren das 420 s für 9 Sekunden Audio. Der
-    Realtime-Faktor wäre damit unbrauchbar, ausgerechnet die Zahl, an der
-    man `large-v3` gegen `turbo` abwägt.
+    Ohne das zahlt die **erste** Datei jedes Laufs versteckte Einmalkosten
+    mit und der Realtime-Faktor wird unbrauchbar — ausgerechnet die Zahl,
+    an der man Modelle gegeneinander abwägt. Zwei real erwischte Fälle:
+    Whisper lud beim ersten Lauf 3 GB herunter (420 s für 9 s Audio), und
+    ONNX optimiert den Graphen beim ersten Inferenz-Aufruf (Parakeet:
+    erste Datei 30 s, danach 4 s). Deshalb reicht Laden nicht — eine
+    Sekunde Stille durch das Modell schieben gehört dazu.
     """
+    import numpy as np
+
     from sidecar.meeting_pipeline import _get_transcriber, pick_default_whisper_model
 
     started = time.time()
-    _get_transcriber(model or pick_default_whisper_model(), language)
+    t = _get_transcriber(model or pick_default_whisper_model(), language)
+    t.transcribe_with_words(np.zeros(16_000, dtype=np.float32))
     return round(time.time() - started, 1)
 
 

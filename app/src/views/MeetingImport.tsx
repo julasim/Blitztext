@@ -14,6 +14,9 @@ import { useMeetingStore, type SkippedPath } from "../state/useMeetingStore";
 
 const FALLBACK_EXTENSIONS = [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".mp4"];
 
+/** "" = Automatik (Sidecar wählt: large-v3 mit GPU, sonst medium). */
+const MODEL_AUTO = "";
+
 export function MeetingImport() {
   const goLibrary = useMeetingStore((s) => s.goLibrary);
   const enqueue = useMeetingStore((s) => s.enqueue);
@@ -21,6 +24,7 @@ export function MeetingImport() {
 
   const [hover, setHover] = useState(false);
   const [paths, setPaths] = useState<string[]>([]);
+  const [model, setModel] = useState<string>(MODEL_AUTO);
   const [state, setState] = useState<"idle" | "submitting" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [skipped, setSkipped] = useState<SkippedPath[]>([]);
@@ -97,7 +101,10 @@ export function MeetingImport() {
     setState("submitting");
     setError(null);
     try {
-      const res = await enqueue(paths);
+      const res = await enqueue(
+        paths,
+        model === MODEL_AUTO ? undefined : { whisper_model: model },
+      );
       if (res.count === 0) {
         setState("error");
         setSkipped(res.skipped);
@@ -159,6 +166,14 @@ export function MeetingImport() {
 
         {paths.length > 0 && (
           <PathList paths={paths} onRemove={(p) => setPaths((c) => c.filter((x) => x !== p))} />
+        )}
+
+        {paths.length > 0 && (
+          <ModelPicker
+            models={config?.models ?? []}
+            value={model}
+            onChange={setModel}
+          />
         )}
 
         {error && (
@@ -236,6 +251,66 @@ export function MeetingImport() {
           Der Fortschritt steht in der Seitenleiste, abbrechen geht dort auch.
         </p>
       </div>
+    </div>
+  );
+}
+
+function ModelPicker({
+  models,
+  value,
+  onChange,
+}: {
+  models: { id: string; label: string; hint: string }[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const active = models.find((m) => m.id === value);
+  return (
+    <div style={{ marginTop: 16 }}>
+      <label
+        style={{
+          display: "block",
+          fontSize: "var(--fs-xs)",
+          textTransform: "uppercase",
+          fontWeight: 600,
+          letterSpacing: "0.08em",
+          color: "var(--bt-muted-2)",
+          marginBottom: 6,
+        }}
+      >
+        Modell
+      </label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          width: "100%",
+          padding: "10px 12px",
+          border: "1px solid var(--bt-line)",
+          borderRadius: "var(--radius-lg)",
+          fontSize: "var(--fs-base)",
+          background: "var(--bt-white)",
+        }}
+      >
+        <option value="">Automatisch</option>
+        {models.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+      <p
+        style={{
+          marginTop: 6,
+          fontSize: "var(--fs-xs)",
+          color: "var(--bt-subtle)",
+          lineHeight: 1.5,
+        }}
+      >
+        {active
+          ? active.hint
+          : "Wählt selbst: höchste Genauigkeit mit GPU, sonst ein ausgewogenes Modell."}
+      </p>
     </div>
   );
 }

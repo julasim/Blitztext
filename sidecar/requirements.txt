@@ -18,6 +18,10 @@ keyring>=25.0.0      # HuggingFace-Token im Windows-Credential-Manager
 # --- Transcription ---
 faster-whisper>=1.0.0   # bringt PyAV mit → dekodiert MP3/M4A/FLAC/OGG selbst
 soundfile>=0.12.1       # Audio-Ausschnitte (Sprecher-Hörproben)
+onnx-asr>=0.12          # Parakeet TDT v3 (schnelles Zweitmodell, CPU/ONNX).
+                        # Bewusst OHNE onnxruntime-gpu: dessen cuDNN-DLLs
+                        # neben denen von torch sind die Konfliktsorte, die
+                        # uns cu121 eingebrockt hat. CPU ist schnell genug.
 
 # --- Diarization ---
 # pyannote 4 bringt Opt-out-Telemetrie mit (Default AN, otel.pyannote.ai).

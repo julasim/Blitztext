@@ -130,8 +130,18 @@ def _release_vram() -> None:
         pass
 
 
-def _get_transcriber(model: str, language: str) -> Transcriber:
-    device, compute_type = _pick_device_for_whisper()
+def _get_transcriber(model: str, language: str):
+    """Engine-Dispatch über den Modellnamen.
+
+    ``parakeet-tdt-0.6b-v3`` → ONNX-Pfad (CPU, ``core/parakeet.py``),
+    alles andere → faster-whisper. Beide Klassen haben dieselbe
+    ``transcribe_with_words``-Oberfläche; ab hier ist der Rest der
+    Pipeline engine-blind.
+    """
+    from core.parakeet import MODEL_ID as PARAKEET_ID, ParakeetTranscriber
+
+    is_parakeet = model == PARAKEET_ID
+    device, compute_type = ("cpu", "onnx") if is_parakeet else _pick_device_for_whisper()
     key = f"{model}:{language}:{device}"
 
     cached = _transcriber_cache.get(key)
@@ -139,12 +149,15 @@ def _get_transcriber(model: str, language: str) -> Transcriber:
         _transcriber_cache.move_to_end(key)
         return cached
 
-    t = Transcriber(
-        model_size=model,
-        language=language,
-        device=device,
-        compute_type=compute_type,
-    )
+    if is_parakeet:
+        t = ParakeetTranscriber(language=language)
+    else:
+        t = Transcriber(
+            model_size=model,
+            language=language,
+            device=device,
+            compute_type=compute_type,
+        )
     t.load()
     _transcriber_cache[key] = t
 
@@ -275,9 +288,12 @@ def run_stages(
         words, info = transcriber.transcribe_with_words(
             audio, on_progress=_on_transcribe_progress
         )
-        if info.get("language") and info.get("language") != language:
-            # Auto-detect result differs — store what Whisper actually found.
-            meeting_store.set_language(meeting_id, info["language"])
+        detected = info.get("language")
+        if detected and detected not in ("auto", language):
+            # Auto-detect result differs — store what the engine found.
+            # "auto" heißt: die Engine benennt die Sprache nicht (Parakeet),
+            # dann bleibt die Nutzer-Angabe stehen.
+            meeting_store.set_language(meeting_id, detected)
 
         _emit(on_event, meeting_id, "transcribe", 1.0, eta_sec=time.time() - ts_start)
 
