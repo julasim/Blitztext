@@ -73,6 +73,32 @@ def store(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def queue(store, tmp_path):
+    """Warteschlange mit eigener Event-Sammlung, isoliert vom Singleton.
+
+    Gibt ``(queue, events, audio)`` zurück. ``audio`` ist eine leere
+    Platzhalterdatei — ``create_meeting_shell`` prüft nur die Existenz;
+    Tests, die wirklich transkribieren, setzen ``run_stages`` ein.
+    """
+    from sidecar.jobs import JobQueue
+
+    JobQueue.reset_for_tests()
+
+    events: list[tuple[str, dict]] = []
+    q = JobQueue(on_event=lambda name, payload: events.append((name, payload)))
+    # Damit die RPC-Methoden dieselbe Instanz treffen wie der Test.
+    JobQueue._instance = q
+
+    audio = tmp_path / "probe.mp3"
+    audio.write_bytes(b"nicht wirklich audio")
+
+    yield q, events, audio
+
+    q.stop()
+    JobQueue.reset_for_tests()
+
+
+@pytest.fixture
 def sample_meeting(store):
     """Ein Meeting mit zwei Sprechern und zwei Turns, frisch persistiert.
 

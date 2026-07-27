@@ -147,6 +147,7 @@ class ParakeetTranscriber:
         *,
         language: str | None = None,
         on_progress: Callable[[float], None] | None = None,
+        hotwords: str | None = None,
     ) -> tuple[list[dict], dict]:
         """Voller Durchlauf, bei langen Aufnahmen in Fenstern.
 
@@ -154,6 +155,12 @@ class ParakeetTranscriber:
         selbst (25 europäische). Die Rückgabe meldet deshalb ``language:
         "auto"``; die Pipeline übernimmt dann die Whisper-Konvention,
         nichts zu überschreiben.
+
+        ``hotwords`` wird ebenfalls ignoriert — der TDT-Decoder von
+        onnx-asr kennt kein Vokabular-Priming. Das Argument steht hier
+        nur, damit die Signatur zu ``Transcriber`` passt und der
+        Engine-Dispatch keine Sonderfälle braucht. Die UI weist darauf
+        hin, dass Vokabular nur bei Whisper wirkt.
         """
         if self._model is None:
             raise RuntimeError("Model not loaded. Call load() first.")

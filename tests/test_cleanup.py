@@ -92,3 +92,63 @@ def test_cleanup_unbekanntes_meeting(store):
         call_method("cleanup.run", {"meeting_id": "gibt-es-nicht"})
 
     assert exc.value.code == -32002
+
+
+def test_lesbar_setzt_satzzeichen(store, events, tmp_path):
+    """Stufe B darf interpunktieren — genau der Unterschied zu Stufe A."""
+    from sidecar.merger import merge, speaker_to_store_dict, turn_to_store_dict
+
+    roh = "also ähm der fluchtweg der führt über den osthof das passt so"
+    words = [
+        {"t0_ms": i * 400, "t1_ms": (i + 1) * 400, "text": w}
+        for i, w in enumerate(roh.split())
+    ]
+    turns, speakers = merge(words, [{"start_ms": 0, "end_ms": 9000, "speaker": "S0"}])
+
+    mid = store.create_meeting(title="Statik", language="de", status="ready")
+    store.upsert_speakers(mid, [speaker_to_store_dict(s) for s in speakers])
+    persisted = store.get_meeting(mid)
+    assert persisted is not None
+    label_to_id = {s["label"]: s["id"] for s in persisted["speakers"]}
+    store.upsert_turns(mid, [turn_to_store_dict(t, label_to_id) for t in turns])
+
+    captured, done = events
+    res = call_method("cleanup.run", {"meeting_id": mid, "mode": "readable"})
+    assert res["mode"] == "readable"
+    assert done.wait(timeout=180), "cleanup.done kam nicht"
+
+    m = store.get_meeting(mid)
+    assert m is not None
+    clean = m["turns"][0]["text_clean"]
+    assert clean, "text_clean wurde nicht geschrieben"
+    assert clean.rstrip()[-1] in ".!?", f"kein Satzende: {clean!r}"
+    assert "ähm" not in clean.lower()
+    assert "Osthof" in clean or "osthof" in clean, "Inhalt muss erhalten bleiben"
+
+
+def test_stufenwechsel_rechnet_neu(store, sample_meeting, events):
+    """Ohne text_clean_mode würde der zweite Lauf alles überspringen und
+    der Umschalter wäre wirkungslos."""
+    captured, done = events
+    m = store.get_meeting(sample_meeting)
+    assert m is not None
+    for t in m["turns"]:
+        store.set_turn_clean(t["id"], t["text_raw"], mode="faithful")
+
+    call_method("cleanup.run", {"meeting_id": sample_meeting, "mode": "readable"})
+    assert done.wait(timeout=180)
+
+    payload = next(p for name, p in captured if name == "cleanup.done")
+    assert payload["skipped"] == 0, "andere Stufe darf nicht übersprungen werden"
+    assert payload["processed"] > 0
+
+
+def test_unbekannte_stufe_wird_abgelehnt(store, sample_meeting):
+    from sidecar.rpc import RpcError
+
+    with pytest.raises(RpcError) as exc:
+        call_method(
+            "cleanup.run", {"meeting_id": sample_meeting, "mode": "erfindet-alles"}
+        )
+
+    assert exc.value.code == -32602

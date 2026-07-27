@@ -17,26 +17,6 @@ from sidecar import jobs
 from sidecar.jobs import CANCELLED, DONE, FAILED, QUEUED, RUNNING, JobQueue
 
 
-@pytest.fixture
-def queue(store, tmp_path, monkeypatch):
-    """Queue mit eingesetzter Pipeline. Gibt (queue, events, calls) zurück."""
-    JobQueue.reset_for_tests()
-
-    events: list[tuple[str, dict]] = []
-    q = JobQueue(on_event=lambda name, payload: events.append((name, payload)))
-    # Damit die RPC-Methoden dieselbe Instanz treffen wie der Test.
-    JobQueue._instance = q
-
-    # create_meeting_shell verlangt eine existierende Datei.
-    audio = tmp_path / "probe.mp3"
-    audio.write_bytes(b"nicht wirklich audio")
-
-    yield q, events, audio
-
-    q.stop()
-    JobQueue.reset_for_tests()
-
-
 def _fake_stages(record: list[str], *, fail: str | None = None, block: threading.Event | None = None):
     """Ersetzt run_stages: notiert die Meeting-ID, respektiert should_cancel."""
 

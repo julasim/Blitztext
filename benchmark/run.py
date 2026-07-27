@@ -150,6 +150,7 @@ def transcribe(
     model: str | None,
     language: str,
     diarize: bool,
+    hotwords: str | None = None,
 ) -> dict:
     """Eine Datei durch die volle Pipeline. Gibt Transkript, Sprecher und
     Zeiten zurück."""
@@ -173,6 +174,7 @@ def transcribe(
         whisper_model=model,
         on_event=on_event,
         diarize=diarize,
+        hotwords=hotwords,
     )
     elapsed = time.time() - started
 
@@ -353,7 +355,14 @@ def _summary_markdown(payload: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def run(label: str, *, model: str | None, language: str, diarize: bool) -> int:
+def run(
+    label: str,
+    *,
+    model: str | None,
+    language: str,
+    diarize: bool,
+    hotwords: str | None = None,
+) -> int:
     from sidecar.audio_io import expand_paths
 
     if not DATA_DIR.exists():
@@ -380,14 +389,25 @@ def run(label: str, *, model: str | None, language: str, diarize: bool) -> int:
     payload = {
         "label": label,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "config": {"model": model, "language": language, "diarize": diarize},
+        "config": {
+            "model": model,
+            "language": language,
+            "diarize": diarize,
+            "hotwords": hotwords,
+        },
         "environment": env,
         "files": [],
     }
 
     for audio, ref in pairs:
         print(f"[läuft] {audio.name} …")
-        result = transcribe(audio, model=model, language=language, diarize=diarize)
+        result = transcribe(
+            audio,
+            model=model,
+            language=language,
+            diarize=diarize,
+            hotwords=hotwords,
+        )
         row = measure(audio, ref, result)
         payload["files"].append(row)
         print(
@@ -425,7 +445,14 @@ def main() -> int:
     p.add_argument("--language", default="de")
     p.add_argument("--no-diarize", action="store_true",
                    help="pyannote überspringen — misst, was die Sprechertrennung kostet")
+    # nargs="+": PowerShell zerlegt eine kommaseparierte Liste beim Aufruf
+    # in Einzelargumente, egal wie man quotet. Statt dagegen anzukämpfen
+    # nehmen wir die Teile entgegen und fügen sie wieder zusammen.
+    p.add_argument("--hotwords", nargs="+", default=None,
+                   help="Fachvokabular, kommasepariert (nur Whisper-Modelle)")
     args = p.parse_args()
+
+    hotwords = " ".join(args.hotwords) if args.hotwords else None
 
     diarize = not args.no_diarize
 
@@ -435,7 +462,13 @@ def main() -> int:
         return prepare([Path(a) for a in args.prepare],
                        model=args.model, language=args.language)
     if args.label:
-        return run(args.label, model=args.model, language=args.language, diarize=diarize)
+        return run(
+            args.label,
+            model=args.model,
+            language=args.language,
+            diarize=diarize,
+            hotwords=hotwords,
+        )
 
     p.print_help()
     return 2

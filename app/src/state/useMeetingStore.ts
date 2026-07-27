@@ -94,8 +94,12 @@ export type State = {
   loadJobs: () => Promise<void>;
   enqueue: (
     paths: string[],
-    options?: { whisper_model?: string; language?: string },
-  ) => Promise<{ count: number; skipped: SkippedPath[] }>;
+    options?: { whisper_model?: string; language?: string; vocabulary?: string },
+  ) => Promise<{
+    count: number;
+    skipped: SkippedPath[];
+    vocabulary_dropped: string[];
+  }>;
   cancelJob: (jobId: string) => Promise<void>;
   clearFinishedJobs: () => Promise<void>;
 
@@ -242,10 +246,11 @@ export const useMeetingStore = create<State>((set, get) => ({
     }
   },
   async enqueue(paths, options) {
-    const res = await call<{ count: number; skipped: SkippedPath[] }>(
-      "queue.enqueue",
-      { paths, ...options },
-    );
+    const res = await call<{
+      count: number;
+      skipped: SkippedPath[];
+      vocabulary_dropped: string[];
+    }>("queue.enqueue", { paths, ...options });
     await Promise.all([get().loadJobs(), get().loadMeetings()]);
     return res;
   },

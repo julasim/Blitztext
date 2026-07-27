@@ -38,6 +38,51 @@ AUDIO_EXTENSIONS: tuple[str, ...] = (
 )
 
 
+#: Whisper kürzt den Hotword-Prompt hart auf ``max_length // 2`` Tokens
+#: (~224). Wir begrenzen vorher auf Zeichen, damit wir sagen können, was
+#: wegfällt — Whisper täte es still. 4 Zeichen je Token ist die grobe
+#: Faustregel für deutschen Text; bewusst konservativ.
+HOTWORDS_MAX_CHARS = 700
+
+
+def build_hotwords(*sources: str | None) -> tuple[str, list[str]]:
+    """Vokabular-Quellen zu einer Whisper-Hotword-Zeile verbinden.
+
+    Reihenfolge ist Priorität: was zuerst kommt, überlebt die Kürzung.
+    Aufrufer geben deshalb das Projektvokabular vor der Firmenliste an.
+
+    Returns
+    -------
+    (hotwords, dropped)
+        ``hotwords`` ist eine kommaseparierte Zeile, ``dropped`` sind die
+        Begriffe, die wegen der Längengrenze weggefallen sind. Die
+        Rückmeldung ist der Punkt: ein still gekürztes Vokabular ist ein
+        Fehler, den niemand bemerkt.
+    """
+    terms: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        for raw in (source or "").replace("\n", ",").split(","):
+            term = " ".join(raw.split())
+            if not term or term.lower() in seen:
+                continue
+            seen.add(term.lower())
+            terms.append(term)
+
+    kept: list[str] = []
+    dropped: list[str] = []
+    length = 0
+    for term in terms:
+        addition = len(term) + (2 if kept else 0)
+        if length + addition > HOTWORDS_MAX_CHARS:
+            dropped.append(term)
+            continue
+        kept.append(term)
+        length += addition
+
+    return ", ".join(kept), dropped
+
+
 def is_supported(path: str | Path) -> bool:
     return Path(path).suffix.lower() in AUDIO_EXTENSIONS
 

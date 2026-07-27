@@ -26,6 +26,7 @@ für die deterministische Farbzuordnung. Das macht es einzeln testbar.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
@@ -77,6 +78,48 @@ class SpeakerStats:
 
 
 # --- Hilfsfunktionen -------------------------------------------------------
+
+
+#: Satzschließende Zeichen. Bewusst rein orthografisch — der Merger kennt
+#: die Sprache nicht und soll auch keine Sprachlogik bekommen.
+_SENTENCE_END = ".?!…:;"
+
+_SPACE_BEFORE_PUNCT = re.compile(r"\s+([,.;:!?…])")
+_SPACE_AROUND_HYPHEN = re.compile(r"\s+-\s*|\s*-\s+")
+_MULTI_SPACE = re.compile(r"\s{2,}")
+
+
+def normalize_word_spacing(text: str) -> str:
+    """Whisper-Trennartefakte im zusammengesetzten Text glätten.
+
+    Whisper gibt Wörter einzeln aus; beim Zusammenfügen mit Leerzeichen
+    entstehen Formen wie ``Karl -Heinz`` oder ``Wort , nächstes``. Das ist
+    reine Kosmetik am Fließtext — **die Wort-Zeitstempel in ``Turn.words``
+    bleiben unangetastet**, weil daraus später Untertitel entstehen und
+    Text und Zeitachse nicht auseinanderlaufen dürfen.
+    """
+    if not text:
+        return ""
+    # Bindestrich zusammenziehen — aber nur bei EINSEITIGEM Leerzeichen:
+    #   "Karl -Heinz"  → "Karl-Heinz"   (Whisper gibt "-Heinz" als Token aus)
+    #   "Karl- Heinz"  → "Karl-Heinz"
+    #   "Ja - also"    → bleibt          (beidseitig = Gedankenstrich)
+    # Das Kriterium ist verlässlich, weil Whisper den Bindestrich am Wort
+    # belässt und einen Gedankenstrich als eigenes Token ausgibt.
+    text = re.sub(r"(\w)\s+-(\w)", r"\1-\2", text)
+    text = re.sub(r"(\w)-\s+(\w)", r"\1-\2", text)
+    text = _SPACE_BEFORE_PUNCT.sub(r"\1", text)
+    return _MULTI_SPACE.sub(" ", text).strip()
+
+
+def _ends_sentence(text: str) -> bool:
+    """Endet der Text auf einem satzschließenden Zeichen?
+
+    Abschließende Anführungs- und Klammerzeichen werden übersprungen:
+    ``sagte er."`` gilt als abgeschlossen.
+    """
+    stripped = (text or "").rstrip().rstrip("\"'»«)]}")
+    return bool(stripped) and stripped[-1] in _SENTENCE_END
 
 
 def _overlap_ms(a0: int, a1: int, b0: int, b1: int) -> int:
@@ -143,6 +186,8 @@ def merge(
     turn_gap_ms: int = 1200,
     min_segment_ms: int = 300,
     overlap_threshold: float = 0.35,
+    bridge_interjection_ms: int = 600,
+    sentence_grace_ms: int = 1500,
 ) -> tuple[list[Turn], list[SpeakerStats]]:
     """Führe Wort-Timestamps und Sprecher-Segmente zu Turns + Speaker-Stats
     zusammen.
@@ -163,6 +208,17 @@ def merge(
     overlap_threshold:
         Wenn ein zweites Segment ≥ diesen Anteil des Best-Overlaps eines
         Wortes abdeckt, gilt der Turn als Kreuzrede (overlap_flag=True).
+    bridge_interjection_ms:
+        Kurze Einwürfe („mhm", „ja") zerschneiden den Turn des
+        Hauptsprechers nicht mehr. Ein Fremdblock unter dieser Dauer, der
+        zwischen zwei Blöcken desselben Sprechers liegt, wird als eigener
+        Turn ausgegeben — die umschließenden Blöcke wachsen aber zusammen.
+        0 schaltet das ab.
+    sentence_grace_ms:
+        Endet ein Turn nur wegen ``turn_gap_ms`` (kein Sprecherwechsel)
+        und trägt das letzte Wort **kein** Satzzeichen, wird bis zu dieser
+        Pausenlänge nicht geschnitten. Verhindert Schnitte mitten im Satz.
+        Muss > ``turn_gap_ms`` sein, um zu wirken.
 
     Returns
     -------
@@ -216,7 +272,13 @@ def merge(
     label_map = _build_label_map(a[1] for a in assignments)
 
     # 3) In Turns gruppieren.
-    turns = _group_turns(assignments, label_map, turn_gap_ms)
+    turns = _group_turns(
+        assignments,
+        label_map,
+        turn_gap_ms,
+        bridge_interjection_ms=bridge_interjection_ms,
+        sentence_grace_ms=sentence_grace_ms,
+    )
 
     # 4) Speaker-Stats berechnen.
     speakers = _compute_speaker_stats(turns, label_map)
@@ -260,7 +322,7 @@ def _build_single_speaker(
             speaker_label="Speaker 1",
             start_ms=g[0].t0_ms,
             end_ms=g[-1].t1_ms,
-            text_raw=text,
+            text_raw=normalize_word_spacing(text),
             words=[{"t0": w.t0_ms, "t1": w.t1_ms, "w": w.text} for w in g],
             overlap_flag=False,
         )
@@ -291,50 +353,144 @@ def _build_label_map(pyannote_speakers: Iterable[str]) -> dict[str, str]:
     return mapping
 
 
+@dataclass
+class _Block:
+    """Zwischenstufe: zusammenhängende Wörter eines Sprechers, noch ohne
+    Turn-Nummer. Existiert, damit die Interjektions-Brücke über
+    Nachbarblöcke hinwegschauen kann — in einem Einzeldurchlauf ginge das
+    nicht, weil man den übernächsten Block noch nicht kennt."""
+
+    speaker_raw: str
+    words: list[Word]
+    overlap: bool
+
+    @property
+    def start_ms(self) -> int:
+        return self.words[0].t0_ms
+
+    @property
+    def end_ms(self) -> int:
+        return self.words[-1].t1_ms
+
+    @property
+    def duration_ms(self) -> int:
+        return max(0, self.end_ms - self.start_ms)
+
+    @property
+    def text(self) -> str:
+        return " ".join(w.text.strip() for w in self.words if w.text.strip())
+
+
+def _split_into_blocks(
+    assignments: list[tuple[Word, str, bool]],
+    turn_gap_ms: int,
+    sentence_grace_ms: int,
+) -> list[_Block]:
+    """Erster Durchgang: an Sprecherwechseln und langen Pausen schneiden.
+
+    Die Satzgrenzen-Regel greift nur bei Pausen **ohne** Sprecherwechsel:
+    wer mitten im Satz kurz Luft holt, bekommt keinen neuen Absatz.
+    """
+    blocks: list[_Block] = []
+    cur: _Block | None = None
+
+    for word, spk_raw, overlap in assignments:
+        if cur is None:
+            cur = _Block(speaker_raw=spk_raw, words=[word], overlap=overlap)
+            continue
+
+        if spk_raw != cur.speaker_raw:
+            blocks.append(cur)
+            cur = _Block(speaker_raw=spk_raw, words=[word], overlap=overlap)
+            continue
+
+        gap = word.t0_ms - cur.words[-1].t1_ms
+        limit = turn_gap_ms
+        if sentence_grace_ms > turn_gap_ms and not _ends_sentence(cur.words[-1].text):
+            # Satz ist noch offen — großzügigere Pausengrenze.
+            limit = sentence_grace_ms
+
+        if gap <= limit:
+            cur.words.append(word)
+            cur.overlap = cur.overlap or overlap
+        else:
+            blocks.append(cur)
+            cur = _Block(speaker_raw=spk_raw, words=[word], overlap=overlap)
+
+    if cur is not None:
+        blocks.append(cur)
+    return blocks
+
+
+def _bridge_interjections(blocks: list[_Block], bridge_ms: int) -> list[_Block]:
+    """Zweiter Durchgang: A–B–A mit kurzem B nicht als Bruch werten.
+
+    Der Einwurf bleibt ein eigener Block (er wurde ja wirklich von jemand
+    anderem gesagt) — aber die beiden A-Blöcke wachsen zusammen, damit ein
+    „mhm" mitten im Satz keinen Absatzumbruch erzeugt. Die Wörter des
+    Einwurfs bleiben zeitlich zwischen den A-Wörtern; nach dem Verbinden
+    wird die Liste deshalb wieder nach Startzeit sortiert.
+    """
+    if bridge_ms <= 0 or len(blocks) < 3:
+        return blocks
+
+    out: list[_Block] = []
+    interjections: list[_Block] = []
+    i = 0
+    while i < len(blocks):
+        cur = blocks[i]
+        # Passt A–B–A mit kurzem B?
+        if (
+            i + 2 < len(blocks)
+            and blocks[i + 1].duration_ms <= bridge_ms
+            and blocks[i + 2].speaker_raw == cur.speaker_raw
+            and blocks[i + 1].speaker_raw != cur.speaker_raw
+        ):
+            merged = _Block(
+                speaker_raw=cur.speaker_raw,
+                words=cur.words + blocks[i + 2].words,
+                overlap=cur.overlap or blocks[i + 2].overlap,
+            )
+            interjections.append(blocks[i + 1])
+            # Der verschmolzene Block bleibt Kandidat für weitere Brücken.
+            blocks = blocks[:i] + [merged] + blocks[i + 3 :]
+            continue
+        out.append(cur)
+        i += 1
+
+    combined = out + interjections
+    combined.sort(key=lambda b: b.start_ms)
+    return combined
+
+
 def _group_turns(
     assignments: list[tuple[Word, str, bool]],
     label_map: dict[str, str],
     turn_gap_ms: int,
+    *,
+    bridge_interjection_ms: int = 0,
+    sentence_grace_ms: int = 0,
 ) -> list[Turn]:
-    turns: list[Turn] = []
-    cur_words: list[Word] = []
-    cur_spk_raw: str | None = None
-    cur_overlap: bool = False
+    blocks = _split_into_blocks(assignments, turn_gap_ms, sentence_grace_ms)
+    blocks = _bridge_interjections(blocks, bridge_interjection_ms)
 
-    def flush() -> None:
-        if not cur_words or cur_spk_raw is None:
-            return
-        text = " ".join(w.text.strip() for w in cur_words if w.text.strip())
+    turns: list[Turn] = []
+    for block in blocks:
+        if not block.text:
+            continue
         turns.append(
             Turn(
                 idx=len(turns),
-                speaker_label=label_map[cur_spk_raw],
-                start_ms=cur_words[0].t0_ms,
-                end_ms=cur_words[-1].t1_ms,
-                text_raw=text,
-                words=[{"t0": w.t0_ms, "t1": w.t1_ms, "w": w.text} for w in cur_words],
-                overlap_flag=cur_overlap,
+                speaker_label=label_map[block.speaker_raw],
+                start_ms=block.start_ms,
+                end_ms=block.end_ms,
+                text_raw=normalize_word_spacing(block.text),
+                words=[
+                    {"t0": w.t0_ms, "t1": w.t1_ms, "w": w.text} for w in block.words
+                ],
+                overlap_flag=block.overlap,
             )
         )
-
-    for word, spk_raw, overlap in assignments:
-        if cur_spk_raw is None:
-            cur_spk_raw = spk_raw
-            cur_words = [word]
-            cur_overlap = overlap
-            continue
-
-        gap = word.t0_ms - cur_words[-1].t1_ms
-        if spk_raw == cur_spk_raw and gap <= turn_gap_ms:
-            cur_words.append(word)
-            cur_overlap = cur_overlap or overlap
-        else:
-            flush()
-            cur_spk_raw = spk_raw
-            cur_words = [word]
-            cur_overlap = overlap
-
-    flush()
     return turns
 
 

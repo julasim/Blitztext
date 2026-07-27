@@ -218,6 +218,7 @@ class JobQueue:
         whisper_model: str | None = None,
         min_speakers: int | None = None,
         max_speakers: int | None = None,
+        hotwords: str | None = None,
     ) -> dict:
         """Datei einreihen. Legt die Meeting-Hülle sofort an, damit die UI
         eine ``meeting_id`` bekommt, und gibt sofort zurück."""
@@ -233,6 +234,7 @@ class JobQueue:
             "whisper_model": resolved_model,
             "min_speakers": min_speakers,
             "max_speakers": max_speakers,
+            "hotwords": hotwords,
         }
         conn = meeting_store.connection()
         conn.execute(
@@ -368,6 +370,7 @@ class JobQueue:
                 whisper_model=params["whisper_model"],
                 min_speakers=params.get("min_speakers"),
                 max_speakers=params.get("max_speakers"),
+                hotwords=params.get("hotwords"),
                 on_event=self._on_event,
                 should_cancel=should_cancel,
             )

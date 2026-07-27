@@ -90,10 +90,27 @@ export function Settings() {
           <HfTokenEditor />
         </Card>
 
-        <Card title="Modelle (Defaults)">
+        <Card title="Fachvokabular">
+          <p
+            style={{
+              fontSize: "var(--fs-sm)",
+              color: "var(--bt-muted)",
+              lineHeight: 1.6,
+              marginBottom: 14,
+            }}
+          >
+            Begriffe, die in euren Besprechungen immer wieder vorkommen —
+            Normen, Fachwörter, Namen von Stammbeteiligten. Sie werden bei
+            jedem Import mitgegeben und helfen Whisper, sie richtig zu
+            schreiben. Pro Zeile oder durch Komma getrennt.
+          </p>
+          <VocabularyEditor />
+        </Card>
+
+        <Card title="Modelle">
           <TextRow
-            label="Whisper"
-            value={cfg?.whisper_models?.[5] ?? "large-v3-turbo"}
+            label="Whisper-Default"
+            value={cfg?.models?.[0]?.id ?? "large-v3"}
             mono
           />
           <TextRow label="Ollama Cleanup" value="qwen2.5:7b-instruct" mono />
@@ -105,8 +122,7 @@ export function Settings() {
               lineHeight: 1.5,
             }}
           >
-            Modell-Auswahl pro Import (klein/groß für Geschwindigkeit vs.
-            Qualität) ist geplant.
+            Das Modell lässt sich bei jedem Import einzeln wählen.
           </p>
         </Card>
 
@@ -129,6 +145,113 @@ export function Settings() {
           nicht global.
         </p>
       </div>
+    </div>
+  );
+}
+
+function VocabularyEditor() {
+  const [value, setValue] = useState("");
+  const [saved, setSaved] = useState("");
+  const [state, setState] = useState<"laden" | "bereit" | "speichert">("laden");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await call<{ vocabulary: string }>("settings.get_vocabulary");
+        if (cancelled) return;
+        setValue(r.vocabulary);
+        setSaved(r.vocabulary);
+        setState("bereit");
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : String(e));
+          setState("bereit");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const save = async () => {
+    setState("speichert");
+    setError(null);
+    try {
+      await call("settings.set_vocabulary", { vocabulary: value });
+      setSaved(value);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setState("bereit");
+    }
+  };
+
+  const dirty = value !== saved;
+  const count = value.split(/[,\n]/).filter((t) => t.trim()).length;
+
+  return (
+    <div>
+      <textarea
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        rows={6}
+        placeholder={"ÖNORM B 1801\nOIB-Richtlinie\nBewehrung\nBauklasse"}
+        disabled={state === "laden"}
+        style={{
+          width: "100%",
+          padding: "10px 12px",
+          border: "1px solid var(--bt-line)",
+          borderRadius: "var(--radius-lg)",
+          fontSize: "var(--fs-sm)",
+          fontFamily: "var(--font-mono)",
+          lineHeight: 1.6,
+          resize: "vertical",
+        }}
+      />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginTop: 8,
+          gap: 12,
+        }}
+      >
+        <span style={{ fontSize: "var(--fs-xs)", color: "var(--bt-subtle)" }}>
+          {count} {count === 1 ? "Begriff" : "Begriffe"}
+          {count > 40 ? " — sehr viele; wenige treffende wirken besser" : ""}
+        </span>
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={!dirty || state !== "bereit"}
+          style={{
+            padding: "8px 16px",
+            borderRadius: "var(--radius-lg)",
+            background: dirty ? "var(--bt-ink)" : "var(--bt-paper)",
+            color: dirty ? "var(--bt-white)" : "var(--bt-muted-2)",
+            fontSize: "var(--fs-sm)",
+            fontWeight: 500,
+          }}
+        >
+          {state === "speichert" ? "Speichert…" : dirty ? "Speichern" : "Gespeichert"}
+        </button>
+      </div>
+      {error && (
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: "var(--fs-sm)",
+            color: "var(--bt-red-ink)",
+            fontFamily: "var(--font-mono)",
+          }}
+        >
+          {error}
+        </div>
+      )}
     </div>
   );
 }

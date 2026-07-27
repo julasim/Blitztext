@@ -226,6 +226,7 @@ def run_stages(
     on_event: Callable[[str, dict], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
     diarize: bool = True,
+    hotwords: str | None = None,
 ) -> None:
     """Decode → transcribe → diarize → merge → persist for an existing
     meeting row. Does all the heavy lifting.
@@ -286,7 +287,7 @@ def run_stages(
             _emit(on_event, meeting_id, "transcribe", p)
 
         words, info = transcriber.transcribe_with_words(
-            audio, on_progress=_on_transcribe_progress
+            audio, on_progress=_on_transcribe_progress, hotwords=hotwords
         )
         detected = info.get("language")
         if detected and detected not in ("auto", language):
@@ -382,6 +383,7 @@ def run_import(
     max_speakers: int | None = None,
     on_event: Callable[[str, dict], None] | None = None,
     diarize: bool = True,
+    hotwords: str | None = None,
 ) -> str:
     """Convenience: create the shell + run all stages synchronously.
 
@@ -401,5 +403,6 @@ def run_import(
         max_speakers=max_speakers,
         on_event=on_event,
         diarize=diarize,
+        hotwords=hotwords,
     )
     return meeting_id

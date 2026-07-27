@@ -144,9 +144,24 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_jobs_state_pos ON jobs(state, position);
 """
 
+# Schritt 3: Einstellungen als Schlüssel/Wert (das Fachvokabular ist
+# mehrzeiliger Text — im Windows-Credential-Manager, wo der HF-Token liegt,
+# wäre er fehl am Platz), plus die Cleanup-Stufe je Turn. Ohne die Stufe
+# überspringt ein zweiter Cleanup-Lauf jeden bereits bereinigten Turn und
+# ein Stufenwechsel bliebe wirkungslos.
+_SETTINGS_SQL = """
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
+
+ALTER TABLE turns ADD COLUMN text_clean_mode TEXT;
+"""
+
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _SCHEMA_SQL),
     (2, _JOBS_SQL),
+    (3, _SETTINGS_SQL),
 )
 
 _SCHEMA_VERSION = max(v for v, _ in _MIGRATIONS)
@@ -495,12 +510,34 @@ def upsert_turns(meeting_id: str, turns: Sequence[dict]) -> None:
             )
 
 
-def set_turn_clean(turn_id: str, text_clean: str) -> bool:
+def set_turn_clean(turn_id: str, text_clean: str, mode: str | None = None) -> bool:
     conn = _connect()
     cur = conn.execute(
-        "UPDATE turns SET text_clean = ? WHERE id = ?", (text_clean, turn_id)
+        "UPDATE turns SET text_clean = ?, text_clean_mode = ? WHERE id = ?",
+        (text_clean, mode, turn_id),
     )
     return cur.rowcount > 0
+
+
+# --- Einstellungen ---------------------------------------------------------
+#
+# Schlüssel/Wert in der DB. Der HF-Token bleibt bewusst im
+# Windows-Credential-Manager — Geheimnisse und Einstellungen trennen.
+
+
+def get_setting(key: str, default: str = "") -> str:
+    row = _connect().execute(
+        "SELECT value FROM settings WHERE key = ?", (key,)
+    ).fetchone()
+    return row["value"] if row is not None else default
+
+
+def set_setting(key: str, value: str) -> None:
+    _connect().execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
 
 
 # --- Transactions ----------------------------------------------------------

@@ -16,7 +16,14 @@ import threading
 
 from core.llm import cleanup_turn
 from sidecar import meeting_store
-from sidecar.rpc import APP_NOT_FOUND, APP_PIPELINE_FAILED, RpcError, emit_event, method
+from sidecar.rpc import (
+    APP_NOT_FOUND,
+    APP_PIPELINE_FAILED,
+    INVALID_PARAMS,
+    RpcError,
+    emit_event,
+    method,
+)
 
 
 # --- Meta / config ---------------------------------------------------------
@@ -193,6 +200,24 @@ def meeting_import_file(
 # --- Warteschlange ---------------------------------------------------------
 
 
+#: Schlüssel der Firmen-Wortliste in der settings-Tabelle.
+VOCABULARY_KEY = "vocabulary"
+
+
+@method("settings.get_vocabulary")
+def settings_get_vocabulary() -> dict:
+    """Dauerhafte Firmen-Wortliste (Normen, wiederkehrende Namen)."""
+    meeting_store.init_db()
+    return {"vocabulary": meeting_store.get_setting(VOCABULARY_KEY)}
+
+
+@method("settings.set_vocabulary")
+def settings_set_vocabulary(vocabulary: str = "") -> dict:
+    meeting_store.init_db()
+    meeting_store.set_setting(VOCABULARY_KEY, vocabulary or "")
+    return {"ok": True}
+
+
 @method("queue.enqueue")
 def queue_enqueue(
     paths: list[str],
@@ -200,6 +225,7 @@ def queue_enqueue(
     whisper_model: str | None = None,
     min_speakers: int | None = None,
     max_speakers: int | None = None,
+    vocabulary: str | None = None,
 ) -> dict:
     """Mehrere Dateien und/oder **Ordner** einreihen.
 
@@ -212,7 +238,7 @@ def queue_enqueue(
     """
     import logging
 
-    from sidecar.audio_io import expand_paths
+    from sidecar.audio_io import build_hotwords, expand_paths
     from sidecar.jobs import JobQueue
 
     log = logging.getLogger("sidecar.import")
@@ -222,6 +248,15 @@ def queue_enqueue(
     files, skipped = expand_paths(paths)
     log.info("queue.enqueue: %d Pfad(e) → %d Datei(en), %d übersprungen",
              len(paths), len(files), len(skipped))
+
+    # Projektvokabular zuerst — bei der Längenkürzung überlebt, was vorne
+    # steht, und das Projektspezifische ist dringlicher als die Firmenliste.
+    meeting_store.init_db()
+    hotwords, dropped = build_hotwords(
+        vocabulary, meeting_store.get_setting(VOCABULARY_KEY)
+    )
+    if dropped:
+        log.warning("Vokabular gekürzt, weggefallen: %s", ", ".join(dropped))
 
     queue = JobQueue.instance()
     enqueued: list[dict] = []
@@ -233,6 +268,7 @@ def queue_enqueue(
                 whisper_model=whisper_model,
                 min_speakers=min_speakers,
                 max_speakers=max_speakers,
+                hotwords=hotwords or None,
             )
         except Exception as e:  # noqa: BLE001 — eine Datei darf den Stapel nicht killen
             log.exception("queue.enqueue: %s konnte nicht eingereiht werden", f)
@@ -240,7 +276,13 @@ def queue_enqueue(
             continue
         enqueued.append({**res, "path": str(f)})
 
-    return {"enqueued": enqueued, "skipped": skipped, "count": len(enqueued)}
+    return {
+        "enqueued": enqueued,
+        "skipped": skipped,
+        "count": len(enqueued),
+        # Nicht verschweigen, was der Längengrenze zum Opfer fiel.
+        "vocabulary_dropped": dropped,
+    }
 
 
 @method("queue.list")
@@ -280,18 +322,37 @@ def queue_clear_finished() -> dict:
 
 
 @method("cleanup.run")
-def cleanup_run(meeting_id: str, model: str | None = None) -> dict:
+def cleanup_run(
+    meeting_id: str, model: str | None = None, mode: str = "faithful"
+) -> dict:
     """Startet den LLM-Cleanup über alle Turns eines Meetings.
 
     Asynchron — RPC kehrt sofort zurück, Worker-Thread läuft die Turns
     durch und emittiert ``cleanup.progress`` / ``cleanup.done`` /
-    ``cleanup.error`` Events. Idempotent: bereits bereinigte Turns
-    werden übersprungen.
+    ``cleanup.error`` Events.
 
-    Returns ``{ok, started, total}``.
+    ``mode`` wählt die Stufe: ``"faithful"`` (Default, nur Füllwörter und
+    Stotterer) oder ``"readable"`` (zusätzlich Satzzeichen und
+    Satzvervollständigung).
+
+    Idempotent **je Stufe**: ein Turn wird übersprungen, wenn er bereits
+    in *dieser* Stufe bereinigt wurde. Ein Stufenwechsel rechnet also neu
+    — sonst bliebe der Umschalter wirkungslos.
+
+    Returns ``{ok, started, total, mode}``.
     """
     import logging
+
+    from core.llm import CLEANUP_MODES
+
     log = logging.getLogger("sidecar.cleanup")
+
+    if mode not in CLEANUP_MODES:
+        raise RpcError(
+            INVALID_PARAMS,
+            f"Unbekannte Cleanup-Stufe {mode!r}. "
+            f"Erlaubt: {', '.join(sorted(CLEANUP_MODES))}",
+        )
 
     meeting_store.init_db()
     m = meeting_store.get_meeting(meeting_id)
@@ -314,7 +375,8 @@ def cleanup_run(meeting_id: str, model: str | None = None) -> dict:
         skipped = 0
 
         for i, t in enumerate(turns):
-            if t.get("text_clean"):
+            # Nur überspringen, wenn dieselbe Stufe schon gelaufen ist.
+            if t.get("text_clean") and t.get("text_clean_mode") == mode:
                 skipped += 1
                 emit_event(
                     "cleanup.progress",
@@ -340,6 +402,7 @@ def cleanup_run(meeting_id: str, model: str | None = None) -> dict:
                     prev_text=prev_text,
                     next_text=next_text,
                     model=model,
+                    mode=mode,
                 )
             except Exception as e:
                 log.warning("cleanup turn %s failed: %s", t["id"][:8], e)
@@ -354,7 +417,7 @@ def cleanup_run(meeting_id: str, model: str | None = None) -> dict:
                 # Don't break — keep going on subsequent turns.
                 continue
 
-            meeting_store.set_turn_clean(t["id"], cleaned)
+            meeting_store.set_turn_clean(t["id"], cleaned, mode=mode)
             processed += 1
             emit_event(
                 "cleanup.progress",
@@ -385,7 +448,7 @@ def cleanup_run(meeting_id: str, model: str | None = None) -> dict:
         target=_worker, name=f"cleanup-{meeting_id[:8]}", daemon=True
     ).start()
 
-    return {"ok": True, "started": True, "total": total}
+    return {"ok": True, "started": True, "total": total, "mode": mode}
 
 
 # --- Export ----------------------------------------------------------------

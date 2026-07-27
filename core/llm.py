@@ -105,6 +105,40 @@ Wenn nichts zu bereinigen ist, gib den Text wortgleich zurück. Gib \
 AUSSCHLIESSLICH den bereinigten Text zurück, nichts davor, nichts danach.\
 """
 
+READABLE_SYSTEM_PROMPT = """\
+Du machst Meeting-Transkripte lesbar. Der Text stammt aus gesprochener \
+Sprache und ist deshalb oft unvollständig interpunktiert.
+
+Erlaubt:
+- Füllwörter entfernen: ähm, äh, also, halt, ja halt, eh, nun, tja, ne, gell
+- Stotter-Wiederholungen zusammenziehen: "ich ich dachte" → "ich dachte"
+- Abgebrochene Satzanfänge entfernen, wenn derselbe Gedanke direkt danach \
+ausformuliert wird
+- Satzzeichen setzen und Groß-/Kleinschreibung am Satzanfang korrigieren
+- Einen abgebrochenen Satz mit den Wörtern zu Ende führen, die im \
+Abschnitt bereits stehen — durch Umstellen, NICHT durch Erfinden
+
+Strikt verboten:
+- Inhaltliche Wörter ändern, ersetzen oder hinzufügen
+- Zahlen, Maße, Normbezeichnungen, Eigennamen, Fachbegriffe anpassen
+- Text aus den Kontext-Abschnitten in die Antwort übernehmen
+- Aussagen zusammenfassen, deuten oder bewerten
+- Kommentare oder Markierungen in die Antwort schreiben
+
+Der Text muss weiterhin belegen, was gesagt wurde — er soll nur ohne \
+Stolpern lesbar sein. Im Zweifel weniger ändern.
+
+Gib AUSSCHLIESSLICH den bearbeiteten Abschnitt zurück, nichts davor, \
+nichts danach.\
+"""
+
+#: Verfügbare Stufen. ``faithful`` ist Default und bleibt es — ein
+#: Besprechungsprotokoll kann im Bauverfahren Beleg sein.
+CLEANUP_MODES: dict[str, str] = {
+    "faithful": CLEANUP_SYSTEM_PROMPT,
+    "readable": READABLE_SYSTEM_PROMPT,
+}
+
 
 def cleanup_turn(
     turn_text: str,
@@ -112,6 +146,7 @@ def cleanup_turn(
     next_text: str | None = None,
     model: str | None = None,
     timeout: float = 60.0,
+    mode: str = "faithful",
 ) -> str:
     """Bereinigt einen einzelnen Sprecher-Turn via lokales Ollama.
 
@@ -124,6 +159,12 @@ def cleanup_turn(
         dem Modell, Anaphern / abgebrochene Sätze zu verstehen.
     model:
         Ollama-Modell-Tag. Default `qwen2.5:7b-instruct`.
+    mode:
+        ``"faithful"`` (Default) entfernt nur Füllwörter und Stotterer.
+        ``"readable"`` darf zusätzlich Satzzeichen setzen und einen
+        angefangenen Satz zu Ende führen. Beide Stufen ändern **nie** die
+        Turn-Struktur — Fragmente zusammenzuführen ist Aufgabe des
+        Mergers, sonst zerfielen Sprecherzuordnung und Zeitstempel.
 
     Returns
     -------
@@ -149,7 +190,12 @@ def cleanup_turn(
         f"Gib NUR den bereinigten aktuellen Abschnitt zurück."
     )
 
-    result = _call_ollama_local(
-        CLEANUP_SYSTEM_PROMPT, user, model=model, timeout=timeout
-    )
+    system = CLEANUP_MODES.get(mode)
+    if system is None:
+        raise ValueError(
+            f"Unbekannte Cleanup-Stufe {mode!r}. "
+            f"Erlaubt: {', '.join(sorted(CLEANUP_MODES))}"
+        )
+
+    result = _call_ollama_local(system, user, model=model, timeout=timeout)
     return result.strip()

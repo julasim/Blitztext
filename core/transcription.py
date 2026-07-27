@@ -173,6 +173,7 @@ class Transcriber:
         *,
         language: str | None = None,
         on_progress: "Callable[[float], None] | None" = None,
+        hotwords: str | None = None,
     ) -> "tuple[list[dict], dict]":
         """Transcribe + return word-level timestamps.
 
@@ -192,6 +193,13 @@ class Transcriber:
             Optional callback invoked with a 0.0..1.0 value as each segment
             finishes. Whisper is generator-based, so the fraction is based
             on the timestamp of the last emitted segment vs. audio duration.
+        hotwords:
+            Fachvokabular als kommaseparierte Zeile (Teilnehmernamen,
+            Normbezeichnungen, Projektkürzel). Bewusst ``hotwords`` und
+            nicht ``initial_prompt``: letzteres wirkt nur auf das erste
+            30-Sekunden-Fenster und verwässert danach, während hotwords
+            bei jedem Fenster neu in den Prompt geht — bei einer Stunde
+            Audio sind das 120 Fenster.
 
         Returns
         -------
@@ -214,6 +222,7 @@ class Transcriber:
             vad_parameters={"threshold": 0.35, "min_silence_duration_ms": 400},
             word_timestamps=True,
             condition_on_previous_text=True,
+            hotwords=(hotwords or None),
         )
 
         duration = float(info.duration or 0.0)

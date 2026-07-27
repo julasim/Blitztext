@@ -25,6 +25,7 @@ export function MeetingImport() {
   const [hover, setHover] = useState(false);
   const [paths, setPaths] = useState<string[]>([]);
   const [model, setModel] = useState<string>(MODEL_AUTO);
+  const [vocabulary, setVocabulary] = useState("");
   const [state, setState] = useState<"idle" | "submitting" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [skipped, setSkipped] = useState<SkippedPath[]>([]);
@@ -101,10 +102,10 @@ export function MeetingImport() {
     setState("submitting");
     setError(null);
     try {
-      const res = await enqueue(
-        paths,
-        model === MODEL_AUTO ? undefined : { whisper_model: model },
-      );
+      const res = await enqueue(paths, {
+        ...(model === MODEL_AUTO ? {} : { whisper_model: model }),
+        ...(vocabulary.trim() ? { vocabulary: vocabulary.trim() } : {}),
+      });
       if (res.count === 0) {
         setState("error");
         setSkipped(res.skipped);
@@ -173,6 +174,15 @@ export function MeetingImport() {
             models={config?.models ?? []}
             value={model}
             onChange={setModel}
+          />
+        )}
+
+        {paths.length > 0 && (
+          <VocabularyField
+            value={vocabulary}
+            onChange={setVocabulary}
+            // Parakeets TDT-Decoder kennt kein Vokabular-Priming.
+            disabled={model === "parakeet-tdt-0.6b-v3"}
           />
         )}
 
@@ -251,6 +261,61 @@ export function MeetingImport() {
           Der Fortschritt steht in der Seitenleiste, abbrechen geht dort auch.
         </p>
       </div>
+    </div>
+  );
+}
+
+function VocabularyField({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div style={{ marginTop: 16, opacity: disabled ? 0.55 : 1 }}>
+      <label
+        style={{
+          display: "block",
+          fontSize: "var(--fs-xs)",
+          textTransform: "uppercase",
+          fontWeight: 600,
+          letterSpacing: "0.08em",
+          color: "var(--bt-muted-2)",
+          marginBottom: 6,
+        }}
+      >
+        Vokabular für diese Aufnahme
+      </label>
+      <input
+        type="text"
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Teilnehmernamen, Projektkürzel, Fachbegriffe — durch Komma getrennt"
+        style={{
+          width: "100%",
+          padding: "10px 12px",
+          border: "1px solid var(--bt-line)",
+          borderRadius: "var(--radius-lg)",
+          fontSize: "var(--fs-base)",
+          background: disabled ? "var(--bt-paper)" : "var(--bt-white)",
+        }}
+      />
+      <p
+        style={{
+          marginTop: 6,
+          fontSize: "var(--fs-xs)",
+          color: "var(--bt-subtle)",
+          lineHeight: 1.5,
+        }}
+      >
+        {disabled
+          ? "Parakeet unterstützt kein Vokabular — für Namen und Fachbegriffe ein Whisper-Modell wählen."
+          : "Wird mit der Wortliste aus den Einstellungen zusammengeführt. Wenige, treffende Begriffe wirken besser als lange Listen."}
+      </p>
     </div>
   );
 }
