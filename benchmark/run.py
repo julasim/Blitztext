@@ -79,7 +79,7 @@ WORK_DIR.mkdir(parents=True, exist_ok=True)
 _share_model_cache()
 os.environ["APPDATA"] = str(WORK_DIR)
 
-from benchmark.metrics import compare_speakers, wer  # noqa: E402
+from benchmark.metrics import compare_speakers, find_loops, wer  # noqa: E402
 from benchmark.reference import (  # noqa: E402
     load_reference,
     reference_path_for,
@@ -213,6 +213,8 @@ def measure(audio: Path, reference_file: Path, run_result: dict) -> dict:
         "wer": normalized.wer,
         "wer_raw": raw.wer,
         "wer_detail": normalized.as_dict(),
+        # Braucht keine Referenz — trägt auch auf unkorrigiertem Material.
+        "loops": find_loops(run_result["text"]).as_dict(),
         "speakers": speakers.as_dict(),
         "turns": run_result["turns"],
         "duration_ms": run_result["duration_ms"],
@@ -339,13 +341,15 @@ def _summary_markdown(payload: dict) -> str:
         f"- **Modell-Ladezeit:** {payload['environment'].get('model_load_sec')} s "
         f"(vor der Messung, nicht in den Laufzeiten unten enthalten)",
         "",
-        "| Datei | WER | roh | Sprecher (erk./echt) | Dauer | RTF |",
-        "|---|---:|---:|:---:|---:|---:|",
+        "| Datei | WER | roh | Schleifen | Sprecher (erk./echt) | Dauer | RTF |",
+        "|---|---:|---:|---:|:---:|---:|---:|",
     ]
     for r in payload["files"]:
         sp = r["speakers"]
+        loops = r.get("loops", {})
         lines.append(
             f"| {r['file']} | {r['wer']:.1%} | {r['wer_raw']:.1%} | "
+            f"{loops.get('ratio', 0):.1%} | "
             f"{sp['hypothesis_count']}/{sp['reference_count']} | "
             f"{r['elapsed_sec']} s | {r['realtime_factor']} |"
         )

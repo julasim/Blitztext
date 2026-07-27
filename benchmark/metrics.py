@@ -144,6 +144,77 @@ class SpeakerResult:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class LoopResult:
+    """Wiederholungsschleifen — Whispers klassischer Halluzinationsfehler."""
+
+    loops: int
+    affected_words: int
+    total_words: int
+    ratio: float
+    examples: list[tuple[str, int]]
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+def find_loops(text: str, *, ngram: int = 3, min_repeats: int = 3) -> LoopResult:
+    """Unmittelbar wiederholte Wortfolgen zählen.
+
+    **Braucht keine Referenz** — und ist damit die einzige Qualitätszahl,
+    die auch auf unkorrigiertem Material trägt. Eine Passage wie
+    „servus servus servus servus…" ist objektiv falsch, egal was
+    tatsächlich gesagt wurde.
+
+    Der Fehler entsteht, wenn Whisper mit
+    ``condition_on_previous_text=True`` in eine Schleife gerät: die
+    eigene Ausgabe wird zum Prompt des nächsten Fensters und verstärkt
+    sich selbst. Bei schwer verständlichem Audio (Raummikrofon,
+    Kreuzreden) passiert das regelmäßig.
+
+    Erfasst zwei Formen: mehrfach wiederholte n-Gramme und einzelne
+    Wörter, die ``min_repeats + 1`` mal hintereinander stehen.
+    """
+    w = words(text)
+    examples: list[tuple[str, int]] = []
+    affected = 0
+
+    i = 0
+    while i + ngram <= len(w):
+        gram = w[i : i + ngram]
+        repeats = 1
+        j = i + ngram
+        while j + ngram <= len(w) and w[j : j + ngram] == gram:
+            repeats += 1
+            j += ngram
+        if repeats >= min_repeats:
+            examples.append((" ".join(gram), repeats))
+            affected += ngram * repeats
+            i = j
+        else:
+            i += 1
+
+    i = 0
+    while i < len(w):
+        j = i
+        while j < len(w) and w[j] == w[i]:
+            j += 1
+        run = j - i
+        if run > min_repeats:
+            examples.append((w[i], run))
+            affected += run
+        i = max(j, i + 1)
+
+    examples.sort(key=lambda e: e[1], reverse=True)
+    return LoopResult(
+        loops=len(examples),
+        affected_words=affected,
+        total_words=len(w),
+        ratio=affected / len(w) if w else 0.0,
+        examples=examples[:5],
+    )
+
+
 def compare_speakers(reference_names: list[str], hypothesis_count: int) -> SpeakerResult:
     """Erkannte gegen echte Sprecheranzahl.
 

@@ -299,6 +299,18 @@ Was man über die Pipeline wissen muss:
   (`pyannote/audio/tasks/segmentation/speaker_diarization.py`, `mixins.py`),
   kein Paket deklariert es als Dependency. Rausnehmen killt die Diarization.
   Steht mit Begründung in den requirements — Kommentar nicht wegkürzen.
+- **`condition_on_previous_text` steht bewusst auf `False`.** Es speist
+  Whispers eigene Ausgabe als Prompt ins nächste 30-Sekunden-Fenster; bei
+  Raummikrofon und Kreuzreden schaukeln sich daraus Wiederholungsschleifen
+  auf. Auf echtem Material gemessen (PPSV-Besprechung): 1,7 % der Wörter in
+  Schleifen mit `True`, 1,1 % mit `False` — und im Lauf mit Vokabular
+  35× „servus" hintereinander. Wer es zurückstellt, misst vorher mit
+  `benchmark/metrics.find_loops`.
+- **Fachvokabular kann schaden.** `hotwords` wirkt bei jedem Fenster und
+  verschiebt die Ausgabe bei schwierigem Audio massiv — im Test stieg der
+  Schleifenanteil von 1,7 auf 5,2 %. Personennamen sind riskant (fallen in
+  Begrüßungspassagen, wo ohnehin alle durcheinanderreden), Normbegriffe
+  sind sicher. Sparsam halten und messen.
 - **`pct` in `meeting.progress` ist 0..1**, nicht 0..100 — trotz des Namens.
 - **`created_at` hat nur Sekunden-Auflösung** (`_now_iso`). Deshalb sortiert
   `list_meetings` mit `created_at DESC, rowid DESC` — beim Stapel-Import fällt
@@ -339,6 +351,21 @@ Was man über die Pipeline wissen muss:
 ---
 
 ## Änderungslog
+
+- 2026-07-27 — **Sauberere Transkripte, und ein Fund, der die Richtung
+  korrigiert hat.** Umgesetzt: satzbewusster Merger (`normalize_word_spacing`,
+  `sentence_grace_ms`, `bridge_interjection_ms`), Fachvokabular über
+  `hotwords` aus zwei Quellen (Firmenliste in Migration 3 + Feld beim
+  Import), zweistufiger Cleanup (`faithful`/`readable`, Idempotenz je Stufe
+  über `turns.text_clean_mode`).
+  **Dann die Messung am echten Material:** das Vokabular hat den Anteil
+  halluzinierter Wiederholungen von 1,7 auf **5,2 %** getrieben (35× „servus"
+  am Stück). Ursache war nicht das Vokabular selbst, sondern
+  `condition_on_previous_text=True` — jetzt `False`, dazu
+  `hallucination_silence_threshold=2.0`. Ergebnis: Schleifen auf 1,1 %,
+  Laufzeit der 18-Minuten-Datei von 198 auf 125 s.
+  Neu im Messaufbau: `find_loops` — die erste Qualitätszahl, die **ohne
+  korrigierte Referenz** trägt.
 
 - 2026-07-24 — **Parakeet TDT v3 als zweites ASR-Modell** (`core/parakeet.py`
   über `onnx-asr`, bewusst CPU/ONNX — kein onnxruntime-gpu neben torch).

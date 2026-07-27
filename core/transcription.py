@@ -174,6 +174,7 @@ class Transcriber:
         language: str | None = None,
         on_progress: "Callable[[float], None] | None" = None,
         hotwords: str | None = None,
+        condition_on_previous_text: bool = False,
     ) -> "tuple[list[dict], dict]":
         """Transcribe + return word-level timestamps.
 
@@ -221,7 +222,16 @@ class Transcriber:
             vad_filter=True,
             vad_parameters={"threshold": 0.35, "min_silence_duration_ms": 400},
             word_timestamps=True,
-            condition_on_previous_text=True,
+            # condition_on_previous_text speist die eigene Ausgabe als
+            # Prompt ins nächste Fenster. Das hilft bei sauberem Audio,
+            # treibt Whisper bei Raummikrofon und Kreuzreden aber in
+            # Wiederholungsschleifen ("servus servus servus…"), die sich
+            # selbst verstärken. Auf echtem Besprechungsmaterial gemessen:
+            # 1,7–5,2 % der Wörter steckten in solchen Schleifen.
+            condition_on_previous_text=condition_on_previous_text,
+            # Fängt den Rest ab: überspringt lange Stille, wenn dort eine
+            # Halluzination erkannt wird. Nur mit word_timestamps nutzbar.
+            hallucination_silence_threshold=2.0,
             hotwords=(hotwords or None),
         )
 

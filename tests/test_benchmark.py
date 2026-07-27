@@ -188,6 +188,58 @@ def test_parser_leeres_dokument():
     assert ref.text == ""
 
 
+# --- Wiederholungsschleifen -------------------------------------------------
+
+
+def test_sauberer_text_hat_keine_schleifen():
+    from benchmark.metrics import find_loops
+
+    r = find_loops("Der Fluchtweg führt über den Osthof zum Treppenhaus.")
+
+    assert r.loops == 0
+    assert r.ratio == 0.0
+
+
+def test_wiederholte_wortfolge_wird_erkannt():
+    """Der Fall aus dem echten Transkript: „servus grüß dich" viermal."""
+    from benchmark.metrics import find_loops
+
+    text = "hallo " + "servus grüß dich " * 4 + "wie geht es"
+
+    r = find_loops(text)
+
+    assert r.loops >= 1
+    assert r.affected_words >= 12
+    assert r.ratio > 0.5
+
+
+def test_wiederholtes_einzelwort_wird_erkannt():
+    """35× „servus" hintereinander — so im Lauf mit Vokabular gemessen."""
+    from benchmark.metrics import find_loops
+
+    r = find_loops("also " + "servus " * 10 + "weiter")
+
+    assert r.loops >= 1
+    assert any(wort == "servus" and anzahl == 10 for wort, anzahl in r.examples)
+
+
+def test_normale_doppelung_ist_keine_schleife():
+    """„ja ja" oder „sehr sehr gut" ist gesprochene Sprache, kein Fehler."""
+    from benchmark.metrics import find_loops
+
+    assert find_loops("ja ja das sehe ich auch so").loops == 0
+    assert find_loops("das ist sehr sehr gut").loops == 0
+
+
+def test_leerer_text_ohne_division_durch_null():
+    from benchmark.metrics import find_loops
+
+    r = find_loops("")
+
+    assert r.ratio == 0.0
+    assert r.total_words == 0
+
+
 def test_referenzpfad_neben_der_audiodatei():
     p = reference_path_for("C:/x/besprechung.mp3")
     assert p.name == "besprechung.reference.md"
