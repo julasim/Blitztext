@@ -2,7 +2,6 @@
 
 import os
 import threading
-import traceback
 from datetime import datetime
 
 
@@ -31,18 +30,3 @@ def log(msg: str) -> None:
         pass
 
 
-def log_exc(context: str) -> None:
-    try:
-        log(f"{context}\n{traceback.format_exc()}")
-    except Exception:
-        pass
-
-
-def reset() -> None:
-    """Start a new log on app launch so we don't accumulate forever."""
-    try:
-        with _LOCK:
-            with open(_path(), "w", encoding="utf-8") as f:
-                f.write(f"=== Blitztext log started {datetime.now().isoformat()} ===\n")
-    except Exception:
-        pass

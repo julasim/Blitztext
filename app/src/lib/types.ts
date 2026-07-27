@@ -1,11 +1,6 @@
 // TypeScript mirror of sidecar RPC schemas.
 // Source of truth: sidecar/rpc_schema.md — keep these in sync.
 
-export type PingResult = {
-  ok: boolean;
-  version: string;
-};
-
 export type Word = { t0: number; t1: number; w: string };
 
 export type Turn = {
@@ -65,8 +60,6 @@ export type Job = {
   started_at?: string | null;
   finished_at?: string | null;
 };
-
-export type QueueCounts = Record<JobState, number>;
 
 export type MeetingFull = MeetingListItem & {
   audio_path: string;

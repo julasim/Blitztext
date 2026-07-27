@@ -102,15 +102,8 @@ textarea:focus-visible {
 }
 
 /* Animations. */
-@keyframes bt-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
 @keyframes bt-spin {
   to { transform: rotate(360deg); }
-}
-.bt-pulse {
-  animation: bt-pulse 1.2s ease-in-out infinite;
 }
 .bt-spin {
   animation: bt-spin 0.9s linear infinite;

@@ -403,13 +403,3 @@ def run_import(
         diarize=diarize,
     )
     return meeting_id
-
-
-# --- Small helper that the pipeline uses to keep the model warm -----------
-
-
-def warm_models(language: str = "de") -> None:
-    """Pre-load models so the first real import is fast. Optional — the
-    pipeline will load them on demand otherwise."""
-    _get_transcriber(pick_default_whisper_model(), language)
-    DiarizationPipeline.instance().ensure_loaded()

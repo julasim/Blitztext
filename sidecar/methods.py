@@ -16,7 +16,7 @@ import threading
 
 from core.llm import cleanup_turn
 from sidecar import meeting_store
-from sidecar.rpc import APP_NOT_FOUND, RpcError, emit_event, method
+from sidecar.rpc import APP_NOT_FOUND, APP_PIPELINE_FAILED, RpcError, emit_event, method
 
 
 # --- Meta / config ---------------------------------------------------------
@@ -185,7 +185,7 @@ def meeting_import_file(
         raise RpcError(APP_NOT_FOUND, str(e)) from e
     except Exception as e:
         log.exception("meeting.import_file enqueue failed")
-        raise RpcError(-32001, f"Import konnte nicht gestartet werden: {e}") from e
+        raise RpcError(APP_PIPELINE_FAILED, f"Import konnte nicht gestartet werden: {e}") from e
 
     return result
 

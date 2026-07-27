@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Callable, Optional
+from typing import Callable
 
 import httpx
 import numpy as np
@@ -58,10 +58,6 @@ class Transcriber:
             self._models_dir = models_dir
         os.makedirs(self._models_dir, exist_ok=True)
 
-    @property
-    def is_loaded(self) -> bool:
-        return self._model is not None
-
     def _local_model_dir(self) -> str:
         return os.path.join(self._models_dir, self._model_size)
 
@@ -78,14 +74,14 @@ class Transcriber:
                 return True
         return False
 
-    def load(self, on_progress: Optional[Callable[[int, int, str], None]] = None) -> None:
-        """Load the Whisper model. Downloads missing files with real progress."""
+    def load(self) -> None:
+        """Load the Whisper model. Downloads missing files on first use."""
         repo_id = _MODELS.get(self._model_size, self._model_size)
         local_dir = self._local_model_dir()
         os.makedirs(local_dir, exist_ok=True)
 
         if not self._is_cached():
-            self._download_model(repo_id, local_dir, on_progress)
+            self._download_model(repo_id, local_dir)
 
         # Load directly from the flat local dir — no symlinks involved.
         # Defaults to cpu/int8 (legacy dictation path); meeting-mode passes
@@ -96,24 +92,17 @@ class Transcriber:
             compute_type=self._compute_type,
         )
 
-    def _download_model(
-        self,
-        repo_id: str,
-        local_dir: str,
-        on_progress: Optional[Callable[[int, int, str], None]],
-    ) -> None:
-        """Download each model file via direct HTTPS with streaming progress.
+    def _download_model(self, repo_id: str, local_dir: str) -> None:
+        """Download each model file via direct HTTPS.
 
-        Strategy for fast, visible progress:
-        - One quick HEAD on model.bin only to seed the total (it's ~99 % of size).
-        - A shared httpx.Client reuses the TLS connection for all subsequent requests.
-        - Streaming begins immediately → user sees MB/percent from the first chunk.
+        Fortschritt landet alle 50 MB im Log. Der frühere on_progress-Hook
+        fütterte den Download-Dialog des PyQt-Trays; seit dessen Rückbau
+        gibt es keinen Abnehmer mehr.
         """
         base_url = f"https://huggingface.co/{repo_id}/resolve/main"
 
         # Try every known file from HF. Whichever exists gets downloaded.
         # _is_cached() enforces the actual minimum set after the loop.
-        # Order: model.bin first so the progress total is correct from chunk 1.
         candidates = ["model.bin"] + [f for f in _ALL_KNOWN_FILES if f != "model.bin"]
 
         total_bytes = 0
@@ -127,9 +116,6 @@ class Transcriber:
                     total_bytes = int(head.headers.get("Content-Length", "0"))
             except httpx.HTTPError:
                 pass
-
-            if on_progress is not None:
-                on_progress(0, total_bytes, "model.bin")
 
             for name in candidates:
                 target_path = os.path.join(local_dir, name)
@@ -151,11 +137,6 @@ class Transcriber:
                                     continue
                                 f.write(chunk)
                                 done_bytes += len(chunk)
-                                if on_progress is not None:
-                                    try:
-                                        on_progress(done_bytes, total_bytes, name)
-                                    except Exception:
-                                        pass
                                 done_mb = done_bytes // (50 * 1024 * 1024)
                                 if done_mb > last_logged_mb:
                                     last_logged_mb = done_mb
@@ -185,35 +166,6 @@ class Transcriber:
                 "Modell-Dateien unvollständig. Bitte Internetverbindung prüfen "
                 "und App neu starten."
             )
-
-    def set_language(self, language: str) -> None:
-        self._language = language
-
-    def set_model(self, model_size: str) -> None:
-        if model_size != self._model_size:
-            self._model_size = model_size
-            self._model = None
-
-    def transcribe(self, audio: np.ndarray) -> str:
-        if self._model is None:
-            raise RuntimeError("Model not loaded. Call load() first.")
-        if audio.size == 0:
-            return ""
-
-        lang = None if self._language == "auto" else self._language
-        segments, _info = self._model.transcribe(
-            audio,
-            language=lang,
-            beam_size=1,
-            vad_filter=True,
-            vad_parameters={"threshold": 0.3, "min_silence_duration_ms": 500},
-            # Speed tuning: skip timestamp prediction and text conditioning.
-            # Both would slow inference down for ~no quality benefit in dictation.
-            without_timestamps=True,
-            condition_on_previous_text=False,
-        )
-        text = " ".join(seg.text.strip() for seg in segments)
-        return text.strip()
 
     def transcribe_with_words(
         self,
