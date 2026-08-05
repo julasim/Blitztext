@@ -164,7 +164,7 @@ cd app\src-tauri; cargo check
 **Tests** — pytest, Konfiguration in `pytest.ini`:
 
 ```powershell
-.\.venv-sidecar\Scripts\python.exe -m pytest            # 36 Tests, ~1,5 s
+.\.venv-sidecar\Scripts\python.exe -m pytest            # 133 Tests, ~10 s
 .\.venv-sidecar\Scripts\python.exe -m pytest --slow     # + echte MP3 durch Whisper/pyannote
 .\.venv-sidecar\Scripts\python.exe -m pytest --ollama   # + Cleanup gegen lokales Ollama
 .\.venv-sidecar\Scripts\python.exe -m pytest -k merger  # einzelne Datei/Fall
@@ -175,7 +175,7 @@ Tests tragen `@pytest.mark.slow` / `.ollama` und werden ohne die Flags
 übersprungen (Mechanik in `tests/conftest.py`). Jeder Test bekommt über die
 `store`-Fixture eine eigene DB unter einem Temp-`APPDATA`; die echte
 Meeting-DB wird nie angefasst. Für Rust und TypeScript gibt es **keine**
-Tests (Stand 2026-07-23).
+Tests.
 
 **Release-Build:** Sidecar zuerst (`.venv-sidecar\Scripts\python.exe -m PyInstaller
 build-sidecar.spec` → `dist\blitztext-sidecar\` nach `app\src-tauri\binaries\sidecar\`),
@@ -262,10 +262,12 @@ Was man über die Pipeline wissen muss:
 - `meeting_pipeline.py`, `diarization.py`, `merger.py`, `meeting_store.py`,
   `audio_io.py` — die Pipeline (Datei → Whisper+pyannote → Turns → SQLite).
 
-**Tests** (`tests/`, pytest): `conftest.py` (isolierte DB je Test, Opt-in-Flags),
-`test_merger.py`, `test_store.py`, `test_migrations.py`, `test_export.py`,
-`test_rpc.py`, `test_jobs.py`; markiert und übersprungen:
-`test_pipeline_mp3.py` (`--slow`), `test_cleanup.py` (`--ollama`).
+**Tests** (`tests/`, pytest): `conftest.py` (isolierte DB und Queue je Test,
+Opt-in-Flags), `test_merger.py`, `test_store.py`, `test_migrations.py`,
+`test_export.py`, `test_rpc.py`, `test_jobs.py`, `test_audio_io.py`,
+`test_vocabulary.py`, `test_parakeet.py`, `test_benchmark.py`; markiert und
+übersprungen: `test_pipeline_mp3.py` (`--slow`), `test_cleanup.py`
+(`--ollama`).
 
 **Tauri-App** (`app/`):
 - `src/` — React: `App.tsx`, Views (`MeetingImport`, `MeetingReview`,
@@ -276,13 +278,17 @@ Was man über die Pipeline wissen muss:
   Ein Fenster, keine globalen Shortcuts.
 
 **Werkzeug & Doku:**
-- `benchmark/` — Messaufbau: WER und Sprecheranzahl gegen korrigierte
-  Referenzen (`run.py`, `metrics.py`, `reference.py`). Nicht im Paket.
-  `data/`, `results/`, `.work/` sind gitignored — dort liegen echte
-  Bauberatungen.
-- `transcribe.py` — CLI: eine Audiodatei durch die volle Pipeline → Markdown.
+- `benchmark/` — Messaufbau: WER, Schleifen-Anteil und Sprecheranzahl gegen
+  korrigierte Referenzen. `run.py` (CLI), `metrics.py`, `reference.py`, dazu
+  `make_testset.py` + `winrt_tts.ps1`, die den synthetischen Testsatz aus den
+  Windows-Stimmen erzeugen. Nicht im Paket. `data/`, `results/`, `.work/`
+  sind gitignored — dort liegen echte Bauberatungen.
+- `transcribe.py` — CLI: eine Audiodatei durch die volle Pipeline → Markdown,
+  mit `--vocabulary`, `--cleanup` und `--cleanup-mode`.
 - `BUILD.md` — Release (PyInstaller-Sidecar + Tauri-MSI); `build-sidecar.spec`.
-- `PLAN.md` — Umbau-Roadmap (Phase 0–3). Öffnen bei jeder Architekturfrage.
+- `PLAN.md` — **historisch**, Stand April 2026: nennt gelöschte Dateien
+  (`main.py`, `core/audio.py`, `librosa`) und die hinfällige Phase 2. Für die
+  Architektur-Begründungen weiter nützlich, nicht als Aufgabenliste lesen.
 - `assets/` — Branding-SVGs.
 
 ## Stolpersteine
@@ -294,11 +300,6 @@ Was man über die Pipeline wissen muss:
   die nach einem Config-Fehler aussieht, aber nur ein fehlender Ordner ist.
 - **`npm run tauri dev` gibt es nicht** — `app/package.json` hat nur
   `dev`/`build`/`lint`/`preview`. Richtig ist `npx tauri dev`.
-- **`matplotlib` in `sidecar/requirements.txt` sieht wie eine Plot-Leiche aus
-  und ist keine**: pyannote importiert es auf Modulebene
-  (`pyannote/audio/tasks/segmentation/speaker_diarization.py`, `mixins.py`),
-  kein Paket deklariert es als Dependency. Rausnehmen killt die Diarization.
-  Steht mit Begründung in den requirements — Kommentar nicht wegkürzen.
 - **`condition_on_previous_text` steht bewusst auf `False`.** Es speist
   Whispers eigene Ausgabe als Prompt ins nächste 30-Sekunden-Fenster; bei
   Raummikrofon und Kreuzreden schaukeln sich daraus Wiederholungsschleifen
@@ -352,17 +353,58 @@ Was man über die Pipeline wissen muss:
 - **`jobs.meeting_id` ist NULL-bar** (`ON DELETE SET NULL`). Beim Abbruch
   verschwindet die leere Meeting-Hülle, der Job-Eintrag bleibt als Historie.
   Wer über Jobs joint, muss NULL abfangen.
-- pyannote braucht HF-Account mit akzeptierten Modell-Lizenzen (`PLAN.md` § Phase 0).
-  Token liegt im Windows-Anmeldeinformationsmanager (`keyring`, Dienst
-  `Blitztext`, Key `hf_token`) — prüfbar über die RPC-Methode
-  `settings.test_hf_token` (unterscheidet auth-ok von gated-Zugriff fehlt).
-- Pinned Deps nicht „aufräumen": `huggingface_hub<0.30` und `speechbrain<1.1`
-  sind bewusst gepinnt (Runtime-Konflikte mit pyannote 3.3.x, siehe
-  `sidecar/requirements.txt`).
+- pyannote braucht einen HF-Account, der die Bedingungen von
+  `pyannote/speaker-diarization-community-1` akzeptiert hat. Token liegt im
+  Windows-Anmeldeinformationsmanager (`keyring`, Dienst `Blitztext`, Key
+  `hf_token`) — prüfbar über `settings.test_hf_token` (unterscheidet
+  auth-ok von „gated-Zugriff fehlt").
+- **Die alten Pins `huggingface_hub<0.30` und `speechbrain<1.1` sind seit
+  pyannote 4 weg** und dürfen nicht zurück — speechbrain ist gar nicht mehr
+  installiert. Begründung steht in `sidecar/requirements.txt`.
+- **Nur function-local importierte Module gehören in `build-sidecar.spec`.**
+  PyInstaller sieht sie beim Bytecode-Scan nicht; Pakete mit Datendateien
+  (`onnx_asr` → NeMo-Preprocessor-Gewichte) brauchen zusätzlich
+  `collect_all`. Sonst läuft der Dev-Build und der Installer bricht auf der
+  Zielmaschine ab.
 
 ---
 
 ## Änderungslog
+
+- 2026-07-27 — **Aufräumrunde mit drei Prüf-Agenten** (Python, Frontend/Rust,
+  Ordner/Dependencies). Sie haben **drei echte Fehler** gefunden, die keine
+  Kosmetik waren:
+  1. **`--cleanup` in `transcribe.py` war kaputt.** Der Aufruf ging über die
+     inzwischen asynchrone `cleanup.run`, las ein `processed`-Feld, das es
+     nicht mehr gibt (KeyError, vom generischen `except` geschluckt), und
+     der Export schrieb los, während der Worker noch lief. Jetzt direkt über
+     `cleanup_turn`, Turn für Turn, mit Fortschrittsanzeige.
+  2. **`build-sidecar.spec` hätte den nächsten Installer zerstört.**
+     `onnx_asr` fehlte in `collect_all` — Parakeet wäre erst auf der
+     Zielmaschine abgebrochen, weil die NeMo-Preprocessor-Gewichte
+     (`nemo80.onnx` u.a.) nicht mitgepackt worden wären. Dazu fehlten
+     `core.parakeet` und `sidecar.jobs` in `hiddenimports`, und
+     `transformers` stand dort, obwohl es gar nicht installiert ist.
+  3. **Der Benchmark protokollierte das falsche Gerät.** `environment()`
+     riet `"cpu"` aus einem Default, der seit pyannote 4 nicht mehr gilt —
+     jede Ergebnisdatei behauptete CPU-Diarization, obwohl auf der GPU
+     gerechnet wurde. Fragt jetzt die Pipeline selbst.
+  Dazu zwei **Widerlegungen meiner eigenen Vorgaben**: `whisper_models` wird
+  vom Frontend nicht mehr gelesen (Settings.tsx liest seit Parakeet
+  `config.models`), und `matplotlib` ist unter pyannote 4 eine deklarierte
+  Dependency — der Sonderfall aus der 3.x-Zeit ist weg, der Eintrag konnte
+  raus. Entfernt außerdem: `dialog:allow-ask`/`-message` (nie aufgerufen),
+  `core:window:allow-is-maximized` (schon in `core:default`),
+  `python_executable`/`whisper_default`/`ollama_default` aus den
+  RPC-Antworten, sieben ungenutzte CSS-Tokens, `DIAR_MODEL`,
+  `_row_to_dict`, ein totes Regex, zwei `#[allow(...)]` in Rust, ein
+  doppelter CSS-Import. Artefakte: 3 MB Graphify-Index von **vor** beiden
+  Rückbauten (verwies noch auf `main.py`, `MiniWidget.tsx`), 125 MB
+  Benchmark-Scratch, vier `.pyc` gelöschter Module.
+  Nutzersichtbar korrigiert: die Einstellungen nannten noch
+  `speaker-diarization-3.1` als zu akzeptierende Lizenz statt
+  `community-1` — wer der Anleitung folgte, bekam trotzdem einen
+  Gated-Fehler.
 
 - 2026-07-27 — **Sauberere Transkripte, und ein Fund, der die Richtung
   korrigiert hat.** Umgesetzt: satzbewusster Merger (`normalize_word_spacing`,

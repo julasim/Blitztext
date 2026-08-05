@@ -25,8 +25,6 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Callable
 
-import numpy as np
-
 from core.transcription import Transcriber
 from sidecar import audio_io, meeting_store
 from sidecar.diarization import DiarizationPipeline, diar_model_name
@@ -162,7 +160,7 @@ def _get_transcriber(model: str, language: str):
     _transcriber_cache[key] = t
 
     while len(_transcriber_cache) > _TRANSCRIBER_CACHE_SIZE:
-        old_key, _old = _transcriber_cache.popitem(last=False)
+        _transcriber_cache.popitem(last=False)
         _release_vram()
 
     return t

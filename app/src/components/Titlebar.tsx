@@ -88,8 +88,8 @@ export function Titlebar() {
         </span>
         <span
           style={{
-            fontFamily: "var(--font-ui, var(--font-app))",
-            fontSize: "var(--fs-titlebar, 12px)",
+            fontFamily: "var(--font-app)",
+            fontSize: "var(--fs-sm)",
             color: "var(--bt-muted)",
             pointerEvents: "none",
           }}

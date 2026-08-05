@@ -7,7 +7,6 @@ all ``@method`` decorators as import-side-effects.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import httpx
@@ -85,12 +84,8 @@ def config_get() -> dict:
                 "hint": "Kompromiss für Rechner ohne GPU",
             },
         ],
-        # Alte flache Liste — der TS-Spiegel kennt sie noch; entfernen,
-        # sobald kein Frontend-Stand mehr darauf liest.
-        "whisper_models": ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"],
         # Eine Wahrheit für Dateidialog, Drag&Drop und Ordner-Import.
         "audio_extensions": list(AUDIO_EXTENSIONS),
-        "python_executable": os.environ.get("VIRTUAL_ENV", "system"),
     }
 
 
@@ -539,8 +534,6 @@ def settings_get() -> dict:
     return {
         "hf_token_present": bool(tok),
         "hf_token_hint": f"hf_…{last4}" if tok else "",
-        "whisper_default": "large-v3-turbo",
-        "ollama_default": "qwen2.5:7b-instruct",
     }
 
 

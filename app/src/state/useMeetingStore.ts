@@ -45,7 +45,6 @@ type Config = {
   ollama_available: boolean;
   /** Wählbare ASR-Modelle — `id` geht als whisper_model durch die Queue. */
   models: ModelChoice[];
-  whisper_models: string[];
   /** Vom Sidecar gepflegt — der Dateidialog führt keine eigene Liste. */
   audio_extensions: string[];
 };

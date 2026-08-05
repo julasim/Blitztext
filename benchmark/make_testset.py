@@ -30,10 +30,7 @@ import numpy as np
 import soundfile as sf
 
 BENCH_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BENCH_DIR.parent
 OUT_DIR = BENCH_DIR / "data" / "synthetic"
-
-sys.path.insert(0, str(PROJECT_ROOT))
 
 SAMPLE_RATE = 16_000
 PAUSE_SEC = 0.8  # unter der 1200-ms-Turn-Grenze des Mergers

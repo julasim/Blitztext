@@ -4,7 +4,7 @@
 
 Transport: line-delimited JSON-RPC 2.0 over stdin/stdout of the sidecar process.
 
-> Stand 2026-07-23 — vollständig gegen `methods.py` abgeglichen. Wer eine
+> Stand 2026-07-27 — vollständig gegen `methods.py` abgeglichen. Wer eine
 > Methode ergänzt, pflegt sie hier mit; das Dokument war schon einmal drei
 > Namensräume hinterher.
 >
@@ -33,7 +33,7 @@ Transport: line-delimited JSON-RPC 2.0 over stdin/stdout of the sidecar process.
 | Status | Method | Request | Response |
 |---|---|---|---|
 | ✅ | `ping` | — | `{ok, version}` |
-| ✅ | `config.get` | — | `{appdata, models_dir, meetings_dir, db_path, cuda_available, ollama_available, whisper_models[], audio_extensions[], python_executable}` |
+| ✅ | `config.get` | — | `{appdata, models_dir, meetings_dir, db_path, cuda_available, ollama_available, models[], audio_extensions[]}` — `models` ist `{id, label, hint}[]`; `id` geht als `whisper_model` durch die Queue |
 
 ### Meetings
 
@@ -55,7 +55,7 @@ Der Zustand liegt in der Tabelle `jobs` und überlebt einen Absturz.
 
 | Status | Method | Request | Response |
 |---|---|---|---|
-| ✅ | `queue.enqueue` | `{paths[], language="de", whisper_model?, min_speakers?, max_speakers?}` | `{enqueued[], skipped[], count}` — nimmt Dateien **und Ordner** |
+| ✅ | `queue.enqueue` | `{paths[], language="de", whisper_model?, min_speakers?, max_speakers?, vocabulary?}` | `{enqueued[], skipped[], count, vocabulary_dropped[]}` — nimmt Dateien **und Ordner** |
 | ✅ | `queue.list` | `{limit=200}` | `Job[]` in Abarbeitungsreihenfolge |
 | ✅ | `queue.state` | — | `{counts: {queued, running, done, failed, cancelled}, current_job_id, worker_alive}` |
 | ✅ | `queue.cancel` | `{job_id}` | `{ok, state, pending}` — bei `pending: true` läuft der Job noch und bricht am nächsten Prüfpunkt ab |
@@ -106,14 +106,16 @@ Warteschlange, höchstens zweimal; danach `failed`.
 
 | Status | Method | Request | Response |
 |---|---|---|---|
-| ✅ | `cleanup.run` | `{meeting_id, model?}` | `{ok, started, total}` — **async**; idempotent, bereits bereinigte Turns werden übersprungen |
+| ✅ | `cleanup.run` | `{meeting_id, model?, mode="faithful"}` | `{ok, started, total, mode}` — **async**; `mode ∈ {faithful, readable}`. Idempotent **je Stufe**: übersprungen wird nur, was schon in derselben Stufe bereinigt wurde (`turns.text_clean_mode`) |
 | ✅ | `export.markdown` | `{meeting_id, path, use_cleanup=false}` | `{ok, bytes, path}` |
 
 ### Settings
 
 | Status | Method | Request | Response |
 |---|---|---|---|
-| ✅ | `settings.get` | — | `{hf_token_present, hf_token_hint, whisper_default, ollama_default}` |
+| ✅ | `settings.get` | — | `{hf_token_present, hf_token_hint}` |
+| ✅ | `settings.get_vocabulary` | — | `{vocabulary}` — dauerhafte Firmen-Wortliste aus der `settings`-Tabelle |
+| ✅ | `settings.set_vocabulary` | `{vocabulary}` | `{ok}` |
 | ✅ | `settings.set_hf_token` | `{token}` | `{ok, stored}` — leerer String löscht die Credential |
 | ✅ | `settings.test_hf_token` | — | `{ok, stage, user?, repos?, message}`, `stage ∈ {missing, deps, auth, gated, ready}`. `repos` = Zugriff je gated Diarization-Repo (3.1 **und** community-1); `ok` richtet sich nach dem Repo der installierten pyannote-Version |
 
@@ -126,7 +128,7 @@ Der HF-Token liegt im Windows-Anmeldeinformationsmanager (`keyring`, Dienst
 |---|---|
 | `meeting.progress` | `{meeting_id, stage, pct, eta_sec}` — `stage ∈ {decode, transcribe, diarize, merge, persist}`. **`pct` ist 0..1**, nicht 0..100, und bereits über alle fünf Stages gewichtet (5/55/30/5/5 %) |
 | `meeting.done` | `{meeting_id}` |
-| `meeting.error` | `{meeting_id, message}` (bei WAV-Export zusätzlich `stage`) |
+| `meeting.error` | `{meeting_id, message}` |
 | `meeting.warning` | `{meeting_id, stage, message, fallback}` — nicht-fatal. Kommt, wenn pyannote nicht lädt: der Import läuft mit einem Sprecher weiter (`fallback: "single_speaker"`) |
 | `cleanup.progress` | `{meeting_id, processed, skipped, total, turn_id}` |
 | `cleanup.done` | `{meeting_id, processed, skipped, total}` |
@@ -154,6 +156,7 @@ type Turn = {
   end_ms: number
   text_raw: string
   text_clean?: string
+  text_clean_mode?: 'faithful' | 'readable'   // welche Stufe geschrieben hat
   words: { t0: number; t1: number; w: string }[]
   overlap_flag: boolean
 }

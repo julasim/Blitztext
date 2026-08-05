@@ -20,7 +20,7 @@ Notes:
 
 # pylint: disable=undefined-variable
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all
 from pathlib import Path
 
 block_cipher = None
@@ -42,12 +42,15 @@ for pkg in (
     "torch",
     "torchaudio",
     "faster_whisper",
+    # onnx_asr bringt die NeMo-Preprocessor-Gewichte als Datendateien mit
+    # (nemo80.onnx u.a.). Ohne collect_all findet PyInstaller nur den
+    # Modulcode — Parakeet bricht dann erst auf der Zielmaschine ab.
+    "onnx_asr",
     "pyannote",
     "pyannote.audio",
     "lightning_fabric",
     "asteroid_filterbanks",
     "huggingface_hub",
-    "transformers",
     "tokenizers",
     "soundfile",
     "av",  # PyAV
@@ -84,19 +87,27 @@ hiddenimports.extend(
 )
 
 # --- Project deps ---------------------------------------------------------
+#
+# Jedes Modul, das NUR function-local importiert wird, muss hier stehen —
+# PyInstaller sieht solche Importe beim Bytecode-Scan nicht. Das trifft auf
+# fast alles zu, weil der Sidecar-Start bewusst schlank gehalten ist.
 hiddenimports.extend(
     [
         "core.transcription",
+        "core.parakeet",  # nur in meeting_pipeline._get_transcriber importiert
         "core.llm",
         "core.log",
         "sidecar",
         "sidecar.rpc",
         "sidecar.methods",
+        "sidecar.jobs",  # nur in methods.queue_* importiert
         "sidecar.diarization",
         "sidecar.merger",
         "sidecar.meeting_pipeline",
         "sidecar.meeting_store",
         "sidecar.audio_io",
+        # Engine von Parakeet — lädt seine Backends dynamisch.
+        "onnx_asr",
     ]
 )
 
@@ -121,7 +132,7 @@ a = Analysis(
         "IPython",
         "jupyter",
         "notebook",
-        "pandas",  # we don't use it; pyannote/speechbrain might pull it though
+        "pandas",  # wir nutzen es nicht; pyannote zieht es aber mit
     ],
     noarchive=False,
 )

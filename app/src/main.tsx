@@ -1,11 +1,10 @@
-// React-Einstieg. Ein Fenster, eine Wurzel — das schwebende Aufnahme-Widget
-// ist mit dem Mikrofon-Modus entfallen.
+// React-Einstieg: ein Fenster, eine Wurzel.
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
-// Schriften kommen über index.css (@import) — nicht zusätzlich hier laden.
-import "./styles/tokens.css";
+// index.css zieht Schriften und tokens.css per @import mit — hier reicht
+// dieser eine Einstieg.
 import "./index.css";
 
 import App from "./App.tsx";

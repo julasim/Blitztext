@@ -68,9 +68,14 @@ Die Version steht an zwei Stellen und muss gleich sein:
 1. Installer auf einer Maschine **ohne** `.venv-sidecar` installieren — nur so
    fällt auf, wenn ein Modul nur dank der Dev-venv importierbar war.
 2. App starten → Statusleiste muss `sidecar v…` plus `GPU ✓` zeigen.
-3. Eine kurze MP3 importieren und bis zum fertigen Transkript durchlaufen lassen.
-4. Diktat testen: Strg+Alt+1, sprechen, erneut Strg+Alt+1 → Text landet im
-   aktiven Fenster.
+3. Eine kurze MP3 mit **Whisper** importieren und bis zum fertigen Transkript
+   durchlaufen lassen.
+4. Dieselbe Datei mit **Parakeet** importieren. Eigener Prüfpunkt, weil
+   Parakeet über einen zweiten Runtime-Pfad läuft (ONNX statt CTranslate2)
+   und seine Preprocessor-Gewichte als Datendateien mitkommen müssen —
+   fehlt dort etwas, bricht es erst auf der Zielmaschine ab.
+5. Einen Ordner mit mehreren Dateien ziehen → Warteschlange arbeitet sie
+   nacheinander ab, Abbrechen funktioniert.
 
 Ohne Code-Signing zeigt Windows SmartScreen eine Warnung
 („Weitere Informationen" → „Trotzdem ausführen").

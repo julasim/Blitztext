@@ -1,9 +1,7 @@
-// Persistent left sidebar: navigation + meeting list.
+// Linke Seitenleiste: Warteschlange oben, Transkript-Liste darunter.
 //
-// Design pulls directly from the handoff MainApp sidebar — 280px wide,
-// light-paper background, thin right border, section headers, nav links,
-// meeting list with tag colors. Simplified from the prototype (no search
-// yet, no dictation history mixed in — will come in Phase 2).
+// 280px, helles Papier, dünne Trennlinie. Eine Suche gibt es noch nicht —
+// bei den heutigen Mengen genügt Scrollen.
 
 import { FileAudio, Plus, Settings as SettingsIcon, Zap } from "lucide-react";
 import { QueuePanel } from "./QueuePanel";

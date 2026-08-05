@@ -1,8 +1,8 @@
-// Middle column of MeetingReview: scrollable turn-by-turn transcript.
+// Mittlere Spalte der Review-Ansicht: das Transkript, Absatz für Absatz.
 //
-// For MVP we render all turns directly — typical meetings are <2000 turns
-// which React handles fine. If we hit 10k+ turn meetings we swap in
-// @tanstack/react-virtual here, but not yet.
+// Alle Turns werden direkt gerendert. Eine 18-Minuten-Besprechung ergibt
+// rund 80 Absätze, eine lange Sitzung wenige hundert — dafür braucht es
+// keine Virtualisierung.
 
 import { AlertTriangle } from "lucide-react";
 import { useMeetingStore } from "../state/useMeetingStore";

@@ -1,25 +1,24 @@
-// Settings — environment status + editable secrets (HF token).
+// Einstellungen — Umgebungsstatus, HuggingFace-Token, Fachvokabular.
 //
-// Phase-1 keeps it minimal: surface what we have, let the user fix the
-// HF token without leaving the app. Whisper/Ollama model dropdowns and
-// other prefs land in Phase 2 alongside the dictation migration.
+// Das Modell wird nicht hier gewählt, sondern pro Import
+// (MeetingImport.tsx) — verschiedene Aufnahmen brauchen verschiedene
+// Modelle.
 
 import { Check, Eye, EyeOff, Loader2, X as XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { call } from "../lib/rpc";
 import { useMeetingStore } from "../state/useMeetingStore";
 
+/** Nur die Felder, die diese Ansicht wirklich liest — `settings.get`
+ *  liefert mehr (whisper_default, ollama_default), das zeigen wir aus
+ *  `config.models` bzw. brauchen es nicht. */
 type SettingsSnapshot = {
   hf_token_present: boolean;
   hf_token_hint: string;
-  whisper_default: string;
-  ollama_default: string;
 };
 
 type TokenStatus = {
-  ok: boolean;
   stage: "missing" | "auth" | "gated" | "ready" | "deps";
-  user?: string;
   message: string;
 };
 
@@ -82,10 +81,9 @@ export function Settings() {
             Wird für die Sprecher-Erkennung (pyannote-Modelle) gebraucht. Token
             mit „Read"-Recht und aktivierter Berechtigung „
             <em>Read access to contents of all public gated repos you can access</em>".
-            Lizenzen für{" "}
-            <code>pyannote/speaker-diarization-3.1</code> und{" "}
-            <code>pyannote/segmentation-3.0</code> auf huggingface.co müssen
-            akzeptiert sein.
+            Auf huggingface.co müssen die Bedingungen von{" "}
+            <code>pyannote/speaker-diarization-community-1</code> akzeptiert
+            sein.
           </p>
           <HfTokenEditor />
         </Card>

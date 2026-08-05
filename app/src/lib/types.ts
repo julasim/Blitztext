@@ -11,6 +11,8 @@ export type Turn = {
   end_ms: number;
   text_raw: string;
   text_clean?: string;
+  /** Welche Cleanup-Stufe `text_clean` geschrieben hat. */
+  text_clean_mode?: "faithful" | "readable";
   words: Word[];
   overlap_flag: boolean;
 };

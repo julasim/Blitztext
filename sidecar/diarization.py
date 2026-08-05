@@ -53,10 +53,6 @@ def diar_model_name() -> str:
     return "pyannote/speaker-diarization-3.1"
 
 
-# Historischer Name, wird noch in Log-/Fehlertexten referenziert.
-DIAR_MODEL = diar_model_name()
-
-
 # -- HF token ---------------------------------------------------------------
 
 

@@ -85,7 +85,6 @@ class SpeakerStats:
 _SENTENCE_END = ".?!…:;"
 
 _SPACE_BEFORE_PUNCT = re.compile(r"\s+([,.;:!?…])")
-_SPACE_AROUND_HYPHEN = re.compile(r"\s+-\s*|\s*-\s+")
 _MULTI_SPACE = re.compile(r"\s{2,}")
 
 

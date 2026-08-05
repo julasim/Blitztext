@@ -6,12 +6,11 @@
 
 :root {
   /* --- Ink / text --- */
-  --bt-ink: #09090b; /* primary text, primary buttons, waveform */
+  --bt-ink: #09090b; /* primary text, primary buttons */
   --bt-ink-soft: #111827;
   --bt-muted: #4b5563;
   --bt-muted-2: #6b7280;
   --bt-subtle: #9ca3af;
-  --bt-hint: #71717a;
 
   /* --- Surfaces --- */
   --bt-white: #ffffff;
@@ -39,28 +38,17 @@
   --fs-lg: 16px;
   --fs-xl: 20px;
 
-  --fw-normal: 400;
-  --fw-medium: 500;
   --fw-semibold: 600;
 
   /* --- Radii --- */
-  --radius-xs: 3px;
   --radius-sm: 4px;
-  --radius-md: 5px;
   --radius-lg: 6px;
   --radius-xl: 10px;
   --radius-2xl: 14px;
 
   /* --- Shadows --- */
-  --shadow-window:
-    0 0 0 0.5px rgba(0, 0, 0, 0.18),
-    0 28px 80px rgba(0, 0, 0, 0.28),
-    0 8px 24px rgba(0, 0, 0, 0.12);
   --shadow-float:
     0 24px 60px rgba(0, 0, 0, 0.28),
     0 6px 20px rgba(0, 0, 0, 0.12);
-  --shadow-panel:
-    0 18px 50px rgba(0, 0, 0, 0.22),
-    0 2px 6px rgba(0, 0, 0, 0.08);
   --focus-ring: 0 0 0 3px rgba(9, 9, 11, 0.1);
 }

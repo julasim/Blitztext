@@ -116,7 +116,17 @@ def environment() -> dict:
         info["gpu"] = torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
     except Exception:
         info["cuda"], info["gpu"] = None, None
-    info["diarization_device"] = os.environ.get("BLITZTEXT_DIAR_CPU", "1") == "1" and "cpu" or "auto"
+    # Nicht raten, sondern die Pipeline selbst fragen — der Default hängt
+    # an der pyannote-Version (3.x erzwingt CPU, 4.x nutzt die GPU), und
+    # ein falsch protokolliertes Gerät entwertet den ganzen Vergleich.
+    try:
+        from sidecar.diarization import DiarizationPipeline
+
+        pipeline = DiarizationPipeline.instance()
+        pipeline.ensure_loaded()
+        info["diarization_device"] = pipeline.device
+    except Exception:
+        info["diarization_device"] = None
     return info
 
 

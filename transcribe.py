@@ -89,7 +89,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--whisper-model",
-        help="Whisper-Modell (default: large-v3-turbo bei CUDA, sonst medium)",
+        help="ASR-Modell (default: large-v3 bei CUDA, sonst medium; "
+        "parakeet-tdt-0.6b-v3 für den schnellen CPU-Pfad)",
+    )
+    parser.add_argument(
+        "--vocabulary",
+        help="Fachvokabular, kommasepariert (nur Whisper-Modelle)",
     )
     parser.add_argument(
         "--min-speakers", type=int, help="Hinweis an pyannote: minimale Sprecherzahl"
@@ -106,6 +111,13 @@ def main() -> int:
         "--cleanup-model",
         default="qwen2.5:7b-instruct",
         help="Ollama-Modell für Cleanup (default: qwen2.5:7b-instruct)",
+    )
+    parser.add_argument(
+        "--cleanup-mode",
+        default="faithful",
+        choices=["faithful", "readable"],
+        help="faithful: nur Füllwörter raus. readable: zusätzlich "
+        "Satzzeichen und angefangene Sätze zu Ende führen",
     )
     parser.add_argument(
         "--out",
@@ -125,7 +137,10 @@ def main() -> int:
     print(f"Modell:   {args.whisper_model or '(auto)'}", file=sys.stderr)
     print(f"Sprache:  {args.language}", file=sys.stderr)
     if args.cleanup:
-        print(f"Cleanup:  via Ollama / {args.cleanup_model}", file=sys.stderr)
+        print(
+            f"Cleanup:  via Ollama / {args.cleanup_model} ({args.cleanup_mode})",
+            file=sys.stderr,
+        )
     print("", file=sys.stderr)
 
     progress = ProgressPrinter()
@@ -138,6 +153,7 @@ def main() -> int:
             whisper_model=args.whisper_model,
             min_speakers=args.min_speakers,
             max_speakers=args.max_speakers,
+            hotwords=args.vocabulary,
             on_event=progress,
         )
     except Exception as e:
@@ -147,20 +163,46 @@ def main() -> int:
     print(f"\nFertig in {transcribe_dt:.1f}s — meeting_id {meeting_id}", file=sys.stderr)
 
     # Optional LLM cleanup.
+    #
+    # cleanup.run ist asynchron (Worker-Thread + Events) — für eine CLI, die
+    # gleich danach exportiert, wäre das wertlos. Deshalb gehen wir hier
+    # direkt über cleanup_turn und warten Turn für Turn ab.
     if args.cleanup:
-        from sidecar.methods import cleanup_run  # registered RPC method
+        from core.llm import cleanup_turn
 
-        print("\nLLM-Cleanup läuft (kann bei langen Meetings einige Minuten dauern)…", file=sys.stderr)
+        print(
+            "\nLLM-Cleanup läuft (kann bei langen Meetings einige Minuten dauern)…",
+            file=sys.stderr,
+        )
         t1 = time.time()
-        try:
-            r = cleanup_run(meeting_id=meeting_id, model=args.cleanup_model)
-            print(
-                f"Cleanup fertig in {time.time() - t1:.1f}s — "
-                f"{r['processed']} Turns bereinigt, {r['skipped']} übersprungen",
-                file=sys.stderr,
-            )
-        except Exception as e:
-            print(f"Cleanup-Fehler (Markdown wird trotzdem geschrieben): {e}", file=sys.stderr)
+        meeting_store.init_db()
+        m = meeting_store.get_meeting(meeting_id)
+        turns = m["turns"] if m else []
+        done = failed = 0
+        for i, t in enumerate(turns):
+            prev_text = turns[i - 1]["text_raw"] if i > 0 else None
+            next_text = turns[i + 1]["text_raw"] if i + 1 < len(turns) else None
+            try:
+                cleaned = cleanup_turn(
+                    t["text_raw"],
+                    prev_text=prev_text,
+                    next_text=next_text,
+                    model=args.cleanup_model,
+                    mode=args.cleanup_mode,
+                )
+            except Exception as e:
+                failed += 1
+                if failed == 1:
+                    print(f"  Cleanup-Fehler: {e}", file=sys.stderr)
+                continue
+            meeting_store.set_turn_clean(t["id"], cleaned, mode=args.cleanup_mode)
+            done += 1
+            print(f"\r  {done}/{len(turns)} Absätze", end="", file=sys.stderr)
+        print(
+            f"\nCleanup fertig in {time.time() - t1:.1f}s — "
+            f"{done} bereinigt, {failed} fehlgeschlagen",
+            file=sys.stderr,
+        )
 
     # Markdown export.
     from sidecar.methods import export_markdown

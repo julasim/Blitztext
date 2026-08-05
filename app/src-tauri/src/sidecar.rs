@@ -42,8 +42,8 @@ struct RpcRequest<'a> {
 /// (method + params, no id). We disambiguate at dispatch time.
 #[derive(Debug, Deserialize)]
 struct RpcMessage {
-    #[allow(dead_code)]
-    jsonrpc: Option<String>,
+    // `jsonrpc` fehlt hier absichtlich — serde ignoriert unbekannte Felder,
+    // und gelesen wird die Version nie.
     id: Option<u64>,
     #[serde(default)]
     result: Option<Value>,
@@ -113,7 +113,6 @@ impl SidecarHandle {
             working_dir.display()
         );
 
-        #[allow(unused_mut)]
         let mut cmd = Command::new(&program);
         cmd.args(&args)
             .current_dir(&working_dir)

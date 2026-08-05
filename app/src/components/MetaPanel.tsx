@@ -109,11 +109,7 @@ export function MetaPanel() {
             <label style={{ color: "var(--bt-muted)" }}>
               Bereinigt anzeigen
             </label>
-            <Toggle
-              checked={useCleanup}
-              onChange={setUseCleanup}
-              disabled={cleanedCount === 0}
-            />
+            <Toggle checked={useCleanup} onChange={setUseCleanup} />
           </div>
         )}
         {cleanedCount > 0 && cleanedCount < totalCount && (
@@ -234,18 +230,15 @@ function Row({
 function Toggle({
   checked,
   onChange,
-  disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
-  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
-      disabled={disabled}
       onClick={() => onChange(!checked)}
       style={{
         width: 34,
@@ -255,7 +248,6 @@ function Toggle({
         position: "relative",
         transition: "background 120ms ease",
         flexShrink: 0,
-        opacity: disabled ? 0.4 : 1,
       }}
     >
       <span

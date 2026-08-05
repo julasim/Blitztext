@@ -257,10 +257,6 @@ def palette_color(n: int) -> str:
 # --- Helpers ---------------------------------------------------------------
 
 
-def _row_to_dict(row: sqlite3.Row | None) -> dict | None:
-    return dict(row) if row is not None else None
-
-
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 

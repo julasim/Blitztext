@@ -26,8 +26,8 @@ body {
   font-size: var(--fs-base);
   line-height: 1.5;
   color: var(--bt-ink);
-  /* No background here — transparent windows (mini-widget) need to see
-     through; opaque windows (main) paint their own background in App. */
+  /* Kein Hintergrund hier — App.tsx malt ihn, damit Views ihn überschreiben
+     können. */
   background: transparent;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

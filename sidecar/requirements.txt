@@ -17,7 +17,7 @@ keyring>=25.0.0      # HuggingFace-Token im Windows-Credential-Manager
 
 # --- Transcription ---
 faster-whisper>=1.0.0   # bringt PyAV mit → dekodiert MP3/M4A/FLAC/OGG selbst
-soundfile>=0.12.1       # Audio-Ausschnitte (Sprecher-Hörproben)
+soundfile>=0.12.1       # WAV schreiben (benchmark/make_testset.py)
 onnx-asr>=0.12          # Parakeet TDT v3 (schnelles Zweitmodell, CPU/ONNX).
                         # Bewusst OHNE onnxruntime-gpu: dessen cuDNN-DLLs
                         # neben denen von torch sind die Konfliktsorte, die
@@ -30,17 +30,17 @@ onnx-asr>=0.12          # Parakeet TDT v3 (schnelles Zweitmodell, CPU/ONNX).
 pyannote.audio>=4.0,<5
 torch>=2.8,<2.9
 torchaudio>=2.8,<2.9
-# matplotlib war unter pyannote 3.x ein Modulebenen-Import (Plot-Leiche,
-# die keine war). Ob pyannote 4 ohne auskommt, ist noch nicht verifiziert —
-# erst prüfen, dann entfernen.
-matplotlib>=3.7
 
-# Historische Pins, seit pyannote 4 obsolet (dokumentiert, damit sie
-# niemand "zur Sicherheit" wieder einführt):
+# Nicht mehr nötig, aber der Vollständigkeit halber dokumentiert:
+#   matplotlib  → unter pyannote 3.x ein undeklarierter Modulebenen-Import
+#                 (die berüchtigte "Plot-Leiche, die keine war"). pyannote 4
+#                 deklariert es selbst (Requires-Dist: matplotlib>=3.10),
+#                 also hier entfernt (verifiziert 2026-07-27).
 #   huggingface_hub<0.30  → 4.x verlangt >=0.28.1 und nutzt token= nativ
 #   speechbrain<1.1       → 4.x deklariert speechbrain nicht mehr; in der
 #                           venv ist es nicht installiert, keine lazy Imports
 #                           (verifiziert 2026-07-24)
+# Diese Pins dürfen NICHT "zur Sicherheit" zurück.
 
 # --- Dev-only ---
 pyinstaller>=6.6.0
