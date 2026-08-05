@@ -306,6 +306,18 @@ Was man über die Pipeline wissen muss:
   Schleifen mit `True`, 1,1 % mit `False` — und im Lauf mit Vokabular
   35× „servus" hintereinander. Wer es zurückstellt, misst vorher mit
   `benchmark/metrics.find_loops`.
+- **Entrauschen mit DeepFilterNet3 wurde geprüft und verworfen** (2026-07-27).
+  Die Literatur verspricht 20–40 % relative WER-Verbesserung bei verrauschtem
+  Audio; auf der PPSV-Besprechung (Raummikrofon, mehrere entfernte Sprecher,
+  Hall) war das Ergebnis **schlechter**: bei voller Dämpfung fiel der RMS um
+  96 % und Whisper produzierte Wortsalat („Der Fickdorfer lernt" statt „Dann
+  bauen wir es"), bei begrenzter Dämpfung (6/12 dB) stiegen die
+  Wiederholungsschleifen. Grund: das Modell ist auf Nahsprech-Audio trainiert
+  und hält Raumhall für Rauschen — es dämpft genau die leisen, entfernten
+  Sprecher weg, die man am dringendsten bräuchte. Nicht erneut versuchen ohne
+  Material aus Nahmikrofonen. Nebenbei: `deepfilternet` fordert `numpy<2.0`,
+  pyannote 4 fordert `>=2.2` — der Pin ist veraltet (läuft auch mit numpy 2),
+  aber pip meldet bei jeder Installation einen Konflikt.
 - **Fachvokabular kann schaden.** `hotwords` wirkt bei jedem Fenster und
   verschiebt die Ausgabe bei schwierigem Audio massiv — im Test stieg der
   Schleifenanteil von 1,7 auf 5,2 %. Personennamen sind riskant (fallen in
