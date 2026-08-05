@@ -47,6 +47,28 @@ vor oder nach einem Stack-Wechsel lief.
 .\.venv-sidecar\Scripts\python.exe benchmark\run.py --selftest
 ```
 
+### Synthetischer Testsatz
+
+`make_testset.py` erzeugt aus den deutschen Windows-Stimmen einen
+Mehrsprecher-Testsatz mit **bekanntem** Wortlaut und bekannter
+Sprecherzahl — er schreibt MP3 und Referenz selbst, aus dem Drehbuch:
+
+```powershell
+.\.venv-sidecar\Scripts\python.exe benchmark\make_testset.py
+```
+
+Landet in `data/synthetic/` (gitignored, jederzeit neu erzeugbar). Auf
+diesem Satz beruhen alle Stack-Vergleiche dieser Codebasis.
+
+**Nie `--prepare` auf `data/synthetic/` laufen lassen** — das würde die
+Pipeline-Ausgabe zur Referenz machen und den Vergleich zum Zirkelschluss.
+
+Wichtige Grenze: TTS-Stimmen klingen unnatürlich gleichmäßig, die
+Sprechertrennung hat es damit leichter als in einem echten Raum. Der
+Testsatz ist ein **Regressionsmelder** („ist etwas schlechter geworden?"),
+kein Qualitätsurteil („ist es gut genug?"). Deshalb trägt jede
+Ergebniszeile daraus das Flag `"synthetic": true`.
+
 Lässt die Windows-Sprachausgabe einen Satz mit bekanntem Wortlaut sprechen,
 kodiert ihn nach MP3 und schickt ihn durch die volle Kette. Beweist, dass
 der Messaufbau funktioniert, bevor eine vertrauliche Aufnahme angefasst
@@ -58,6 +80,7 @@ wird. Erwartetes WER: nahe null.
 |---|---|
 | **WER** | Wortfehlerrate nach Normalisierung (klein, ohne Satzzeichen, Bindestrich = Leerzeichen). Die Hauptzahl. |
 | **WER roh** | Ohne Normalisierung. Der Abstand zur normalisierten Zahl zeigt, wie viel reine Schreibweise ist. |
+| **Schleifen** | Anteil der Wörter in unmittelbaren Wiederholungen („servus servus servus…"). **Braucht keine Referenz** — damit die einzige Zahl, die auch auf unkorrigiertem Material trägt. Whispers klassischer Halluzinationsfehler. |
 | **S / D / I** | Ersetzungen, Löschungen, Einfügungen. Viele Einfügungen deuten auf Halluzinationen in Stille, viele Löschungen auf verschluckte Passagen. |
 | **Sprecher** | Erkannte gegen echte Anzahl. |
 | **RTF** | Realtime-Faktor: Audiosekunden je Rechensekunde. Höher ist schneller. |

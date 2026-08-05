@@ -136,6 +136,27 @@ a = Analysis(
     ],
     noarchive=False,
 )
+
+# --- Ballast raus ---------------------------------------------------------
+#
+# collect_all("torch") nimmt das komplette Paket mit, auch die Teile, die
+# nur zum KOMPILIEREN gegen torch gebraucht werden: statische Bibliotheken
+# (.lib, allein dnnl.lib ist 2,2 GB), C++-Header und Typ-Stubs. Zur
+# Laufzeit lädt niemand davon etwas. Zusammen 2,7 GB von 7,4 — das
+# entscheidet darüber, ob sich das Paket überhaupt noch bündeln lässt.
+_DEAD_WEIGHT = (".lib", ".h", ".hpp", ".pdb", ".cmake", ".pyi")
+
+
+def _is_build_only(dest: str) -> bool:
+    lowered = dest.lower()
+    return lowered.endswith(_DEAD_WEIGHT)
+
+
+_before = len(a.datas) + len(a.binaries)
+a.datas = [entry for entry in a.datas if not _is_build_only(entry[0])]
+a.binaries = [entry for entry in a.binaries if not _is_build_only(entry[0])]
+print(f"[spec] Nicht-Laufzeit-Dateien entfernt: {_before - len(a.datas) - len(a.binaries)}")
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(

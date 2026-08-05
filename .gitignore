@@ -10,9 +10,10 @@ __pycache__/
 venv/
 env/
 
-# PyInstaller output (build-sidecar.spec)
+# PyInstaller output (build-sidecar.spec) und das portable Paket
 build/
 dist/
+release/
 *.manifest
 *.spec.bak
 
@@ -48,3 +49,4 @@ Thumbs.db
 
 # Logs & local state
 *.log
+*.err
