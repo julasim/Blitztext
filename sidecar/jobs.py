@@ -2,7 +2,7 @@
 
 Warum es sie gibt
 -----------------
-Vorher startete jeder ``meeting.import_file`` sofort einen eigenen
+Vorher startete jeder Import sofort einen eigenen
 Daemon-Thread und vergaß ihn. Daraus folgten drei Dinge:
 
 * **Kein Abbruch.** Ein versehentlich gestarteter Zwei-Stunden-Import ließ
@@ -24,8 +24,10 @@ Abbruch
 -------
 Ein wartender Job wird schlicht auf ``cancelled`` gesetzt und übersprungen.
 Bei einem laufenden Job wird ein Flag gesetzt, das die Pipeline zwischen den
-Stages und nach jedem Whisper-Segment prüft. **Während pyannote läuft gibt
-es keinen Prüfpunkt** — dort meldet die Bibliothek keinen Fortschritt, der
+Stages und in ``on_progress`` prüft. Wie schnell das greift, hängt vom Modell
+ab: **Whisper** meldet nach jedem Segment (Sekunden), **Parakeet** je
+240-Sekunden-Fenster (bis zu vier Minuten). **Während pyannote läuft gibt es
+gar keinen Prüfpunkt** — dort meldet die Bibliothek keinen Fortschritt, der
 Abbruch greift also erst, wenn die Diarization fertig ist. Bei langen
 Dateien kann das dauern; ehrlicher als ein Abbruch-Knopf, der lügt.
 
@@ -130,7 +132,10 @@ class JobQueue:
 
     def __init__(self, on_event: Callable[[str, dict], None] | None = None) -> None:
         self._on_event = on_event
-        self._lock = threading.Lock()
+        # RLock, weil cancel() und _claim_next() die Sperre über DB-Operationen
+        # halten müssen, die ihrerseits Events senden — und _emit_changed()
+        # ruft state(), das dieselbe Sperre nimmt.
+        self._lock = threading.RLock()
         self._wake = threading.Event()
         self._worker: threading.Thread | None = None
         self._stopping = False
@@ -181,7 +186,38 @@ class JobQueue:
         if worker is not None and worker.is_alive():
             worker.join(timeout=5)
         with self._lock:
-            self._worker = None
+            # Nur vergessen, wenn der Thread wirklich beendet ist. Sonst legt
+            # ein folgendes start() einen ZWEITEN Worker an, und beide greifen
+            # parallel in die Warteschlange — genau der Parallellauf, den sie
+            # verhindern soll.
+            if worker is None or not worker.is_alive():
+                self._worker = None
+
+    def shutdown(self) -> None:
+        """Geordnet herunterfahren (Sidecar beendet sich).
+
+        Das Schließen der App ist kein Absturz und darf deshalb keinen der
+        zwei Versuche kosten: ein noch laufender Job geht zurück in die
+        Warteschlange, sein Zähler wieder herunter. Ohne das wäre eine lange
+        Datei nach zweimaligem Schließen endgültig als „bringt den Import
+        reproduzierbar zum Absturz" abgelegt worden — eine falsche Diagnose.
+        """
+        self.stop()
+        with self._lock:
+            job_id = self._current
+        if not job_id:
+            return
+        # Bedingung auf RUNNING: wird der Job in derselben Sekunde noch fertig,
+        # bleibt sein Endzustand stehen.
+        freigegeben = meeting_store.connection().execute(
+            "UPDATE jobs SET state = ?, started_at = NULL, "
+            "attempts = MAX(attempts - 1, 0) WHERE id = ? AND state = ?",
+            (QUEUED, job_id, RUNNING),
+        )
+        if freigegeben.rowcount:
+            _log.info(
+                "Job %s beim Beenden zurück in die Warteschlange", job_id[:8]
+            )
 
     def recover_orphans(self) -> dict:
         """``running``-Jobs beim Start können nur ein Absturz sein."""
@@ -203,9 +239,57 @@ class JobQueue:
                     f"den Import reproduzierbar zum Absturz.",
                 )
                 failed.append(job["id"])
-        if requeued or failed:
-            self._emit("queue.recovered", {"requeued": requeued, "failed": failed})
-        return {"requeued": len(requeued), "failed": len(failed)}
+
+        verwaist = self._raeume_meetings_ohne_job()
+        if requeued or failed or verwaist:
+            self._emit(
+                "queue.recovered",
+                {"requeued": requeued, "failed": failed, "verwaiste_meetings": verwaist},
+            )
+        return {
+            "requeued": len(requeued),
+            "failed": len(failed),
+            "orphaned_meetings": len(verwaist),
+        }
+
+    def _raeume_meetings_ohne_job(self) -> list[str]:
+        """Meetings auf ``processing``, zu denen es keinen offenen Job gibt.
+
+        Die Meeting-Hülle entsteht in ``create_meeting_shell`` und ist bereits
+        committet, bevor die Job-Zeile geschrieben wird — ein Absturz genau
+        dazwischen hinterlässt ein Meeting, das ewig „wird verarbeitet"
+        anzeigt und das die Job-Prüfung oben nie zu sehen bekommt.
+
+        Ohne Turns ist da nichts zu retten: die Hülle wird entfernt. Mit Turns
+        (Absturz erst im persist-Stage) bleibt sie und wird als Fehler
+        markiert, damit die Teilarbeit sichtbar ist.
+        """
+        conn = meeting_store.connection()
+        offen = {
+            r["meeting_id"]
+            for r in conn.execute(
+                "SELECT meeting_id FROM jobs WHERE state IN (?, ?)", (QUEUED, RUNNING)
+            )
+            if r["meeting_id"]
+        }
+        betroffen: list[str] = []
+        for zeile in conn.execute(
+            "SELECT id FROM meetings WHERE status = 'processing'"
+        ).fetchall():
+            mid = zeile["id"]
+            if mid in offen:
+                continue
+            hat_turns = conn.execute(
+                "SELECT 1 FROM turns WHERE meeting_id = ? LIMIT 1", (mid,)
+            ).fetchone()
+            if hat_turns:
+                meeting_store.set_status(mid, "error")
+                _log.warning("Meeting %s hing ohne Job — als Fehler markiert", mid[:8])
+            else:
+                meeting_store.delete_meeting(mid)
+                _log.warning("Leere Meeting-Hülle %s ohne Job entfernt", mid[:8])
+            betroffen.append(mid)
+        return betroffen
 
     # -- Öffentliche Operationen ---------------------------------------
 
@@ -262,19 +346,26 @@ class JobQueue:
 
     def cancel(self, job_id: str) -> dict:
         """Wartenden Job verwerfen oder laufenden zum Abbruch vormerken."""
-        job = get_job(job_id)
-        if job is None:
-            return {"ok": False, "reason": "unbekannter Job"}
-        if job["state"] in TERMINAL:
-            return {"ok": False, "reason": f"Job ist bereits {job['state']}", "state": job["state"]}
+        # Unter derselben Sperre wie _claim_next(): sonst kann der Worker
+        # zwischen dem Lesen des Zustands und dem Umsetzen dazwischenfahren
+        # und den gerade abgebrochenen Job übernehmen.
+        with self._lock:
+            job = get_job(job_id)
+            if job is None:
+                return {"ok": False, "reason": "unbekannter Job"}
+            if job["state"] in TERMINAL:
+                return {
+                    "ok": False,
+                    "reason": f"Job ist bereits {job['state']}",
+                    "state": job["state"],
+                }
 
-        if job["state"] == RUNNING:
-            with self._lock:
+            if job["state"] == RUNNING:
                 self._cancel_requested.add(job_id)
-            _log.info("Abbruch für laufenden Job %s vorgemerkt", job_id[:8])
-            return {"ok": True, "state": RUNNING, "pending": True}
+                _log.info("Abbruch für laufenden Job %s vorgemerkt", job_id[:8])
+                return {"ok": True, "state": RUNNING, "pending": True}
 
-        self._cancel_job_row(job)
+            self._cancel_job_row(job)
         self._emit_changed()
         return {"ok": True, "state": CANCELLED, "pending": False}
 
@@ -322,19 +413,27 @@ class JobQueue:
         _log.info("Job-Worker beendet")
 
     def _claim_next(self) -> dict | None:
+        # Aussuchen und Übernehmen gehören zusammen. Ohne die Zustandsbedingung
+        # im UPDATE (und ohne dieselbe Sperre wie cancel()) konnte ein gerade
+        # abgebrochener Job wieder auf "running" gehoben werden: der Abbruch
+        # hatte die Meeting-Hülle schon gelöscht, die Pipeline lief danach
+        # minutenlang ins Leere und scheiterte erst am Fremdschlüssel.
         conn = meeting_store.connection()
-        row = conn.execute(
-            "SELECT * FROM jobs WHERE state = ? ORDER BY position LIMIT 1", (QUEUED,)
-        ).fetchone()
-        if row is None:
-            return None
-        job = _row_to_job(row)
-        conn.execute(
-            "UPDATE jobs SET state = ?, started_at = ?, attempts = attempts + 1 "
-            "WHERE id = ?",
-            (RUNNING, _now(), job["id"]),
-        )
         with self._lock:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE state = ? ORDER BY position LIMIT 1",
+                (QUEUED,),
+            ).fetchone()
+            if row is None:
+                return None
+            job = _row_to_job(row)
+            claimed = conn.execute(
+                "UPDATE jobs SET state = ?, started_at = ?, attempts = attempts + 1 "
+                "WHERE id = ? AND state = ?",
+                (RUNNING, _now(), job["id"], QUEUED),
+            )
+            if claimed.rowcount == 0:
+                return None
             self._current = job["id"]
         return job
 

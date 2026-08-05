@@ -67,9 +67,16 @@ def _emit(
     meeting_id: str,
     stage: str,
     stage_pct: float,
-    eta_sec: float | None = None,
+    stage_elapsed_sec: float | None = None,
 ) -> None:
-    """Bridge per-stage progress to a unified 0..1 progress value."""
+    """Bridge per-stage progress to a unified 0..1 progress value.
+
+    ``stage_elapsed_sec`` ist die **Laufzeit der gerade abgeschlossenen**
+    Stufe, keine Restzeit — das Feld hieß bis 2026-08-05 ``eta_sec``, und die
+    Oberfläche zeigte den Wert folgerichtig als „noch ~X s" an. Geschätzt
+    wird die Restzeit jetzt im Frontend aus Gesamtfortschritt und bisher
+    verstrichener Zeit.
+    """
     if on_event is None:
         return
     stage_pct = max(0.0, min(1.0, stage_pct))
@@ -80,7 +87,7 @@ def _emit(
             "meeting_id": meeting_id,
             "stage": stage,
             "pct": round(total, 3),
-            "eta_sec": eta_sec,
+            "stage_elapsed_sec": stage_elapsed_sec,
         },
     )
 
@@ -269,7 +276,7 @@ def run_stages(
         if not same:
             shutil.copy2(src, source_copy)
             meeting_store.set_audio_path(meeting_id, str(source_copy))
-        _emit(on_event, meeting_id, "decode", 1.0, eta_sec=time.time() - t0)
+        _emit(on_event, meeting_id, "decode", 1.0, stage_elapsed_sec=time.time() - t0)
 
         # -- Stage: transcribe ---------------------------------------------
         _guard()
@@ -294,7 +301,7 @@ def run_stages(
             # dann bleibt die Nutzer-Angabe stehen.
             meeting_store.set_language(meeting_id, detected)
 
-        _emit(on_event, meeting_id, "transcribe", 1.0, eta_sec=time.time() - ts_start)
+        _emit(on_event, meeting_id, "transcribe", 1.0, stage_elapsed_sec=time.time() - ts_start)
 
         # -- Stage: diarize -------------------------------------------------
         # Best-effort: if pyannote can't load (missing HF token, missing
@@ -320,7 +327,13 @@ def run_stages(
             )
         except _DiarizationSkipped:
             pass
-        except RuntimeError as e:
+        except (RuntimeError, OSError, TypeError, AttributeError, ValueError) as e:
+            # „Best effort" muss auch für Fehler gelten, die NICHT als
+            # RuntimeError ankommen: fehlende DLLs melden sich als OSError,
+            # eine unerwartete Ausgabeform von pyannote als TypeError oder
+            # AttributeError. Bisher beendete beides den ganzen Import,
+            # statt in den Ein-Sprecher-Fallback zu gehen.
+            #
             # Surface as a non-fatal warning so the UI can show a banner.
             if on_event is not None:
                 on_event(
@@ -332,7 +345,7 @@ def run_stages(
                         "fallback": "single_speaker",
                     },
                 )
-        _emit(on_event, meeting_id, "diarize", 1.0, eta_sec=time.time() - diar_start)
+        _emit(on_event, meeting_id, "diarize", 1.0, stage_elapsed_sec=time.time() - diar_start)
 
         # -- Stage: merge ---------------------------------------------------
         _guard()

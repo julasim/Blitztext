@@ -30,6 +30,7 @@ import json
 import os
 import shutil
 import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -169,18 +170,87 @@ _SCHEMA_VERSION = max(v for v, _ in _MIGRATIONS)
 _conn: sqlite3.Connection | None = None
 
 
+def _einzelstatements(sql: str) -> list[str]:
+    """Zerlegt ein SQL-Skript in einzeln ausführbare Statements.
+
+    Nötig, weil ``executescript`` vor dem ersten Statement implizit committet
+    und damit jede umschließende Transaktion aufhebt — ein Migrationsschritt
+    wäre dann nicht mehr unteilbar.
+    """
+    statements: list[str] = []
+    puffer = ""
+    for zeile in sql.splitlines(keepends=True):
+        puffer += zeile
+        if puffer.strip() and sqlite3.complete_statement(puffer):
+            statements.append(puffer)
+            puffer = ""
+    if puffer.strip():
+        statements.append(puffer)
+    return statements
+
+
 def _migrate(conn: sqlite3.Connection) -> int:
-    """Wendet ausstehende Migrationen an. Gibt die erreichte Version zurück."""
+    """Wendet ausstehende Migrationen an. Gibt die erreichte Version zurück.
+
+    Jeder Schritt läuft in einer eigenen Transaktion — SQLite kann auch DDL
+    zurückrollen. Ohne das hinterlässt ein Absturz zwischen Schema-Änderung
+    und Versionsstempel eine DB, die sich **nie wieder öffnen lässt**:
+    ``ALTER TABLE … ADD COLUMN`` kennt kein ``IF NOT EXISTS``, der zweite
+    Versuch scheitert also dauerhaft an „duplicate column name".
+    """
     current = int(conn.execute("PRAGMA user_version;").fetchone()[0])
     for version, sql in _MIGRATIONS:
         if version <= current:
             continue
-        conn.executescript(sql)
-        # PRAGMA nimmt keine Parameter-Bindung — der Wert kommt aus einer
-        # Konstante im Modul, nicht von außen.
-        conn.execute(f"PRAGMA user_version = {version};")
+        conn.execute("BEGIN")
+        try:
+            for statement in _einzelstatements(sql):
+                conn.execute(statement)
+            # PRAGMA nimmt keine Parameter-Bindung — der Wert kommt aus einer
+            # Konstante im Modul, nicht von außen.
+            conn.execute(f"PRAGMA user_version = {version};")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        conn.execute("COMMIT")
         current = version
     return current
+
+
+# Eine Verbindung, mehrere Threads (RPC-Dispatch, Job-Worker, Cleanup-Worker).
+# Diese Sperre serialisiert JEDEN Zugriff darauf und wird von `_transaction()`
+# über die gesamte Transaktion gehalten. RLock, damit die execute-Aufrufe
+# innerhalb einer Transaktion aus demselben Thread durchkommen.
+_db_lock = threading.RLock()
+
+
+class _SerialisierteVerbindung:
+    """sqlite3.Connection hinter ``_db_lock``.
+
+    Der frühere Kommentar an dieser Stelle behauptete, wir teilten nie eine
+    Transaktion über Threadgrenzen — das war falsch: Transaktionen gehören in
+    SQLite der Verbindung, nicht dem Thread. Statt jede der rund dreißig
+    Schreibstellen einzeln abzusichern, geht der Zugriff jetzt gebündelt hier
+    durch.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def execute(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        with _db_lock:
+            return self._conn.execute(*args, **kwargs)
+
+    def executemany(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        with _db_lock:
+            return self._conn.executemany(*args, **kwargs)
+
+    def executescript(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        with _db_lock:
+            return self._conn.executescript(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conn, name)
 
 
 def _connect() -> sqlite3.Connection:
@@ -188,23 +258,22 @@ def _connect() -> sqlite3.Connection:
 
     ``check_same_thread=False`` is required because the RPC layer dispatches
     requests on the main thread but spawns worker threads (e.g. the import
-    pipeline) that hit the DB on hand-offs. SQLite serializes per-connection
-    operations internally, and we never share a transaction across threads,
-    so cross-thread access is safe in our usage.
+    pipeline) that hit the DB on hand-offs. Zugriffe laufen über
+    ``_SerialisierteVerbindung``, damit Transaktionen sich nicht überlappen.
     """
     global _conn
     if _conn is not None:
         return _conn
-    conn = sqlite3.connect(
+    roh = sqlite3.connect(
         str(db_path()),
         isolation_level=None,  # autocommit off via explicit BEGIN
         check_same_thread=False,
     )
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    _migrate(conn)
-    _conn = conn
-    return conn
+    roh.row_factory = sqlite3.Row
+    roh.execute("PRAGMA foreign_keys = ON;")
+    _migrate(roh)
+    _conn = _SerialisierteVerbindung(roh)  # type: ignore[assignment]
+    return _conn
 
 
 def connection() -> sqlite3.Connection:
@@ -219,11 +288,18 @@ def schema_version() -> int:
 
 
 def close() -> None:
-    """Close the connection. Called on shutdown; tests also use this."""
+    """Close the connection. Called on shutdown; tests also use this.
+
+    Unter ``_db_lock``: schließt man die Verbindung, während ein anderer
+    Thread gerade darauf arbeitet, stirbt der Prozess an einer Access
+    Violation aus dem SQLite-C-Code — kein Python-Fehler, kein Traceback.
+    Beim Beenden ist genau das erreichbar, solange der Job-Worker noch läuft.
+    """
     global _conn
-    if _conn is not None:
-        _conn.close()
-        _conn = None
+    with _db_lock:
+        if _conn is not None:
+            _conn.close()
+            _conn = None
 
 
 def init_db() -> None:
@@ -375,8 +451,11 @@ def get_meeting(meeting_id: str) -> dict | None:
     ]
 
     turn_rows = conn.execute(
+        # text_clean_mode MUSS mit raus: `cleanup.run` entscheidet daran, ob
+        # ein Turn in dieser Stufe schon bereinigt ist. Fehlt die Spalte hier,
+        # ist die Bedingung immer falsch und jeder Lauf rechnet alles neu.
         "SELECT id, speaker_id, idx, start_ms, end_ms, text_raw, text_clean, "
-        "words_json, overlap_flag "
+        "text_clean_mode, words_json, overlap_flag "
         "FROM turns WHERE meeting_id = ? ORDER BY idx ASC",
         (meeting_id,),
     ).fetchall()
@@ -448,9 +527,10 @@ def merge_speakers(meeting_id: str, source_id: str, target_id: str) -> int:
     """Reassign all turns from source → target, then delete source speaker.
     Returns the count of reassigned turns.
 
-    Stats on the target are NOT recomputed here — the caller (pipeline or
-    a dedicated recompute function) should refresh word_count / duration_ms
-    / share_pct afterwards if needed.
+    Die Statistiken werden **hier** neu berechnet. Vorher stand hier, das sei
+    Sache des Aufrufers — nur tat es keiner: nach jedem Zusammenführen zeigten
+    Oberfläche und Markdown-Export die alten Anteile, und ihre Summe ergab
+    nicht mehr 100 %.
     """
     if source_id == target_id:
         return 0
@@ -466,7 +546,38 @@ def merge_speakers(meeting_id: str, source_id: str, target_id: str) -> int:
             "DELETE FROM speakers WHERE id = ? AND meeting_id = ?",
             (source_id, meeting_id),
         )
+        _recompute_speaker_stats(conn, meeting_id)
     return moved
+
+
+def _recompute_speaker_stats(conn: sqlite3.Connection, meeting_id: str) -> None:
+    """Wortzahl, Redezeit und Anteil je Sprecher aus den Turns ableiten.
+
+    Läuft innerhalb einer bestehenden Transaktion. Die Wortzahl kommt aus dem
+    Rohtext (nicht aus ``words_json``): der Merger zählt genauso, und der
+    Rohtext ist auch dann da, wenn keine Wort-Zeitstempel vorliegen.
+    """
+    zeilen = conn.execute(
+        "SELECT speaker_id, text_raw, start_ms, end_ms FROM turns "
+        "WHERE meeting_id = ? AND speaker_id IS NOT NULL",
+        (meeting_id,),
+    ).fetchall()
+
+    woerter: dict[str, int] = {}
+    dauer: dict[str, int] = {}
+    for z in zeilen:
+        sid = z["speaker_id"]
+        woerter[sid] = woerter.get(sid, 0) + len((z["text_raw"] or "").split())
+        dauer[sid] = dauer.get(sid, 0) + max(0, int(z["end_ms"]) - int(z["start_ms"]))
+
+    gesamt = sum(dauer.values())
+    for sid in {r["speaker_id"] for r in zeilen}:
+        anteil = round(100.0 * dauer.get(sid, 0) / gesamt, 1) if gesamt else 0.0
+        conn.execute(
+            "UPDATE speakers SET word_count = ?, duration_ms = ?, share_pct = ? "
+            "WHERE id = ? AND meeting_id = ?",
+            (woerter.get(sid, 0), dauer.get(sid, 0), anteil, sid, meeting_id),
+        )
 
 
 # --- Turns -----------------------------------------------------------------
@@ -540,18 +651,35 @@ def set_setting(key: str, value: str) -> None:
 
 
 class _TxnCtx:
+    """Explizite Transaktion — hält dabei die DB-Sperre.
+
+    Ohne die Sperre war das hier ein doppelter Fehler: zwei gleichzeitige
+    Transaktionen ergaben „cannot start a transaction within a transaction",
+    und ein Schreibzugriff aus einem anderen Thread landete mitten in dieser
+    Transaktion und wurde von einem ROLLBACK **stillschweigend** mitgerissen.
+    Transaktionen gelten in SQLite pro Verbindung, und wir haben genau eine.
+    """
+
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
 
     def __enter__(self) -> sqlite3.Connection:
-        self.conn.execute("BEGIN")
+        _db_lock.acquire()
+        try:
+            self.conn.execute("BEGIN")
+        except BaseException:
+            _db_lock.release()
+            raise
         return self.conn
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        if exc_type is None:
-            self.conn.execute("COMMIT")
-        else:
-            self.conn.execute("ROLLBACK")
+        try:
+            if exc_type is None:
+                self.conn.execute("COMMIT")
+            else:
+                self.conn.execute("ROLLBACK")
+        finally:
+            _db_lock.release()
 
 
 def _transaction(conn: sqlite3.Connection) -> _TxnCtx:

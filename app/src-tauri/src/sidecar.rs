@@ -204,7 +204,7 @@ impl SidecarHandle {
 
         // 10 min generous timeout — a meeting cleanup over 200+ turns can
         // legitimately run several minutes. The async-worker methods like
-        // meeting.import_file return their id in milliseconds anyway, so
+        // queue.enqueue return their id in milliseconds anyway, so
         // this only matters for the stuck-call edge case.
         let received = tokio::time::timeout(Duration::from_secs(600), rx)
             .await

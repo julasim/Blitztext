@@ -8,6 +8,7 @@ for LLM cleanup.
 See sidecar/rpc_schema.md for the RPC contract.
 """
 
-from sidecar.rpc import __version__
-
-__all__ = ["__version__"]
+# Bewusst leer: der Re-Export von `__version__` hatte keinen Aufrufer und
+# zog `sidecar.rpc` bei jedem `import sidecar` mit. Die Version steht in
+# `sidecar/rpc.py` (und wird von `tests/test_rpc.py` gegen die drei anderen
+# Stellen abgeglichen).

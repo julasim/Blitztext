@@ -171,8 +171,8 @@ def transcribe(
     warnings: list[str] = []
 
     def on_event(name: str, payload: dict) -> None:
-        if name == "meeting.progress" and payload.get("eta_sec") is not None:
-            stage_seconds[payload["stage"]] = round(float(payload["eta_sec"]), 2)
+        if name == "meeting.progress" and payload.get("stage_elapsed_sec") is not None:
+            stage_seconds[payload["stage"]] = round(float(payload["stage_elapsed_sec"]), 2)
         elif name == "meeting.warning":
             warnings.append(f"{payload.get('stage')}: {payload.get('message')}")
 

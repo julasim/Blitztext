@@ -247,8 +247,14 @@ class Transcriber:
                 if not text:
                     continue
                 words.append({"t0": float(w.start), "t1": float(w.end), "w": text})
-            if on_progress and duration > 0:
-                on_progress(min(1.0, float(seg.end) / duration))
+            # Auch ohne bekannte Dauer melden: der Aufrufer nutzt diesen
+            # Rückruf als **Abbruch-Prüfpunkt**. Meldete faster-whisper keine
+            # Dauer, gab es während der gesamten Transkription gar keinen —
+            # ein Abbruch hätte dann bis zum Ende der Datei gewartet. Ohne
+            # Bezugsgröße bleibt der Fortschritt bei 0, das ist ehrlicher als
+            # eine erfundene Zahl.
+            if on_progress:
+                on_progress(min(1.0, float(seg.end) / duration) if duration > 0 else 0.0)
 
         return words, {
             "language": info.language,

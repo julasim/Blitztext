@@ -16,6 +16,7 @@ import threading
 from core.llm import cleanup_turn
 from sidecar import meeting_store
 from sidecar.rpc import (
+    APP_DEPENDENCY_MISSING,
     APP_NOT_FOUND,
     APP_PIPELINE_FAILED,
     INVALID_PARAMS,
@@ -50,7 +51,9 @@ def _cuda_available() -> bool:
 
 @method("config.get")
 def config_get() -> dict:
+    from core.llm import OLLAMA_LOCAL_DEFAULT_MODEL
     from sidecar.audio_io import AUDIO_EXTENSIONS
+    from sidecar.meeting_pipeline import pick_default_whisper_model
 
     cuda = _cuda_available()
     return {
@@ -60,6 +63,12 @@ def config_get() -> dict:
         "db_path": str(meeting_store.db_path()),
         "cuda_available": cuda,
         "ollama_available": _ollama_available(),
+        # Die tatsächlich gewählten Vorgaben. Die Einstellungsseite zeigte
+        # vorher den ersten Eintrag aus `models` bzw. eine fest verdrahtete
+        # Zeichenkette — auf einem Rechner ohne GPU stand dort large-v3,
+        # während wirklich medium lief.
+        "whisper_default": pick_default_whisper_model(),
+        "cleanup_model": OLLAMA_LOCAL_DEFAULT_MODEL,
         # Für die Modellwahl im Import. `id` geht als whisper_model durch
         # die Queue; der Engine-Dispatch sitzt in meeting_pipeline.
         "models": [
@@ -144,59 +153,20 @@ def speaker_merge(meeting_id: str, source_id: str, target_id: str) -> dict:
     return {"ok": True, "merged_turns": moved}
 
 
-# --- Pipeline (stubs — real implementations come with pyannote+whisper) ----
-
-
-@method("meeting.import_file")
-def meeting_import_file(
-    path: str,
-    title: str | None = None,
-    language: str = "de",
-    whisper_model: str | None = None,
-    min_speakers: int | None = None,
-    max_speakers: int | None = None,
-) -> dict:
-    """Datei in die Warteschlange stellen.
-
-    Gibt ``meeting_id`` (und ``job_id``) sofort zurück; die fünf Stages
-    laufen im Queue-Worker und melden sich über ``meeting.progress`` /
-    ``meeting.done`` / ``meeting.error`` sowie die ``queue.*``-Events.
-
-    Historisch startete diese Methode direkt einen Thread. Seit der
-    Warteschlange läuft **immer nur ein Import gleichzeitig** — zwei
-    parallele Läufe teilten sich sonst Whisper-Cache und GPU.
-    """
-    import logging
-
-    log = logging.getLogger("sidecar.import")
-    log.info("meeting.import_file: path=%r title=%r model=%r", path, title, whisper_model)
-
-    from sidecar.jobs import JobQueue
-
-    try:
-        result = JobQueue.instance().enqueue(
-            path,
-            title=title,
-            language=language,
-            whisper_model=whisper_model,
-            min_speakers=min_speakers,
-            max_speakers=max_speakers,
-        )
-    except FileNotFoundError as e:
-        log.warning("meeting.import_file FileNotFoundError: %s", e)
-        raise RpcError(APP_NOT_FOUND, str(e)) from e
-    except Exception as e:
-        log.exception("meeting.import_file enqueue failed")
-        raise RpcError(APP_PIPELINE_FAILED, f"Import konnte nicht gestartet werden: {e}") from e
-
-    return result
-
-
-# --- Warteschlange ---------------------------------------------------------
+# --- Fachvokabular ---------------------------------------------------------
+#
+# `meeting.import_file` ist am 2026-08-05 entfallen: ein zweiter Einreih-Weg
+# neben `queue.enqueue`, ohne Aufrufer — und ohne `hotwords`. Wer ihn benutzt
+# hätte, hätte das Firmenvokabular still verloren. Einreihen geht jetzt
+# ausschließlich über `queue.enqueue`, das auch Ordner auflöst.
 
 
 #: Schlüssel der Firmen-Wortliste in der settings-Tabelle.
 VOCABULARY_KEY = "vocabulary"
+
+#: Meetings, für die gerade ein Cleanup-Worker läuft (siehe `cleanup.run`).
+_cleanup_laeuft: set[str] = set()
+_cleanup_lock = threading.Lock()
 
 
 @method("settings.get_vocabulary")
@@ -228,7 +198,7 @@ def queue_enqueue(
     verarbeitet werden kann, kommt als ``skipped`` mit Begründung zurück —
     bei 50 Dateien will man wissen, welche fehlt und warum.
 
-    Der Rest läuft wie bei ``meeting.import_file``: seriell, ein Job nach
+    Eingereiht wird seriell, ein Job nach
     dem anderen, Fortschritt über Events.
     """
     import logging
@@ -254,6 +224,19 @@ def queue_enqueue(
         log.warning("Vokabular gekürzt, weggefallen: %s", ", ".join(dropped))
 
     queue = JobQueue.instance()
+    # Läuft der Worker? Scheitert sein Start beim Hochfahren des Sidecars,
+    # wird das dort nur geloggt — die Warteschlange nähme danach weiter Jobs
+    # an, die niemand abarbeitet, und alles bliebe stumm auf `queued` stehen.
+    if not queue.state().get("worker_alive"):
+        log.warning("Job-Worker lief nicht — starte ihn nach")
+        queue.start()
+        if not queue.state().get("worker_alive"):
+            raise RpcError(
+                APP_PIPELINE_FAILED,
+                "Die Warteschlange läuft nicht und ließ sich nicht starten. "
+                "Bitte Blitztext neu starten; Details in sidecar.log.",
+            )
+
     enqueued: list[dict] = []
     for f in files:
         try:
@@ -349,6 +332,16 @@ def cleanup_run(
             f"Erlaubt: {', '.join(sorted(CLEANUP_MODES))}",
         )
 
+    # Vorab prüfen statt jeden Absatz einzeln auflaufen zu lassen: ohne
+    # laufendes Ollama scheitern sonst alle Absätze nacheinander, jeder mit
+    # einer technischen Meldung, und der Lauf endet nach Minuten ergebnislos.
+    if not _ollama_available():
+        raise RpcError(
+            APP_DEPENDENCY_MISSING,
+            "Ollama ist nicht erreichbar (127.0.0.1:11434). Der Cleanup "
+            "braucht ein lokal laufendes Ollama mit geladenem Modell.",
+        )
+
     meeting_store.init_db()
     m = meeting_store.get_meeting(meeting_id)
     if m is None:
@@ -358,62 +351,60 @@ def cleanup_run(
     log.info("cleanup.run start: meeting=%s turns=%d", meeting_id, total)
 
     def _worker() -> None:
-        # Re-fetch turns inside the worker so we work with fresh state.
-        meeting_store.init_db()
-        m_fresh = meeting_store.get_meeting(meeting_id)
-        if m_fresh is None:
-            emit_event("cleanup.error", {"meeting_id": meeting_id, "message": "meeting disappeared"})
-            return
-        turns = m_fresh["turns"]
-        n = len(turns)
-        processed = 0
-        skipped = 0
+        try:
+            _cleanup_arbeiten(meeting_id, model, mode, log)
+        finally:
+            # Immer freigeben — sonst bliebe das Meeting nach einem Fehler
+            # dauerhaft für weitere Läufe gesperrt.
+            with _cleanup_lock:
+                _cleanup_laeuft.discard(meeting_id)
 
-        for i, t in enumerate(turns):
-            # Nur überspringen, wenn dieselbe Stufe schon gelaufen ist.
-            if t.get("text_clean") and t.get("text_clean_mode") == mode:
-                skipped += 1
-                emit_event(
-                    "cleanup.progress",
-                    {
-                        "meeting_id": meeting_id,
-                        "processed": processed,
-                        "skipped": skipped,
-                        "total": n,
-                        "turn_id": t["id"],
-                    },
-                )
-                continue
-
-            prev_text = (
-                turns[i - 1].get("text_clean") or turns[i - 1]["text_raw"]
-                if i > 0 else None
+    # Kein zweiter Worker auf denselben Turns: zwei Läufe würden dieselben
+    # Absätze parallel durchs LLM schicken und sich gegenseitig überschreiben.
+    # Das Frontend blockt den Doppelklick inzwischen, aber die CLI und ein
+    # späterer Aufrufer tun das nicht — der Schutz gehört hierher.
+    with _cleanup_lock:
+        if meeting_id in _cleanup_laeuft:
+            raise RpcError(
+                INVALID_PARAMS,
+                "Für dieses Meeting läuft bereits ein Cleanup.",
             )
-            next_text = turns[i + 1]["text_raw"] if i + 1 < n else None
+        _cleanup_laeuft.add(meeting_id)
 
-            try:
-                cleaned = cleanup_turn(
-                    t["text_raw"],
-                    prev_text=prev_text,
-                    next_text=next_text,
-                    model=model,
-                    mode=mode,
-                )
-            except Exception as e:
-                log.warning("cleanup turn %s failed: %s", t["id"][:8], e)
-                emit_event(
-                    "cleanup.error",
-                    {
-                        "meeting_id": meeting_id,
-                        "turn_id": t["id"],
-                        "message": str(e),
-                    },
-                )
-                # Don't break — keep going on subsequent turns.
-                continue
+    threading.Thread(
+        target=_worker, name=f"cleanup-{meeting_id[:8]}", daemon=True
+    ).start()
 
-            meeting_store.set_turn_clean(t["id"], cleaned, mode=mode)
-            processed += 1
+    return {"ok": True, "started": True, "total": total, "mode": mode}
+
+
+def _cleanup_arbeiten(meeting_id: str, model: str | None, mode: str, log) -> None:
+    """Der eigentliche Cleanup-Durchlauf — ein LLM-Aufruf je Absatz."""
+    # Re-fetch turns inside the worker so we work with fresh state.
+    meeting_store.init_db()
+    m_fresh = meeting_store.get_meeting(meeting_id)
+    if m_fresh is None:
+        # fatal: der Lauf endet hier. Die UI darf ihre Fortschrittsanzeige
+        # nur in diesem Fall beenden — der Turn-Fehler weiter unten ist
+        # ausdrücklich KEIN Abbruch.
+        emit_event(
+            "cleanup.error",
+            {
+                "meeting_id": meeting_id,
+                "message": "meeting disappeared",
+                "fatal": True,
+            },
+        )
+        return
+    turns = m_fresh["turns"]
+    n = len(turns)
+    processed = 0
+    skipped = 0
+
+    for i, t in enumerate(turns):
+        # Nur überspringen, wenn dieselbe Stufe schon gelaufen ist.
+        if t.get("text_clean") and t.get("text_clean_mode") == mode:
+            skipped += 1
             emit_event(
                 "cleanup.progress",
                 {
@@ -424,26 +415,66 @@ def cleanup_run(
                     "turn_id": t["id"],
                 },
             )
+            continue
 
-        log.info(
-            "cleanup.run done: meeting=%s processed=%d skipped=%d total=%d",
-            meeting_id, processed, skipped, n,
+        prev_text = (
+            turns[i - 1].get("text_clean") or turns[i - 1]["text_raw"]
+            if i > 0 else None
         )
+        next_text = turns[i + 1]["text_raw"] if i + 1 < n else None
+
+        try:
+            cleaned = cleanup_turn(
+                t["text_raw"],
+                prev_text=prev_text,
+                next_text=next_text,
+                model=model,
+                mode=mode,
+            )
+        except Exception as e:
+            log.warning("cleanup turn %s failed: %s", t["id"][:8], e)
+            emit_event(
+                "cleanup.error",
+                {
+                    "meeting_id": meeting_id,
+                    "turn_id": t["id"],
+                    "message": str(e),
+                    # Nicht fatal: der Worker macht mit dem nächsten
+                    # Absatz weiter. Ohne diese Unterscheidung beendete
+                    # die UI ihre Anzeige beim ersten Aussetzer und gab
+                    # den Knopf frei, während der Lauf noch lief.
+                    "fatal": False,
+                },
+            )
+            # Don't break — keep going on subsequent turns.
+            continue
+
+        meeting_store.set_turn_clean(t["id"], cleaned, mode=mode)
+        processed += 1
         emit_event(
-            "cleanup.done",
+            "cleanup.progress",
             {
                 "meeting_id": meeting_id,
                 "processed": processed,
                 "skipped": skipped,
                 "total": n,
+                "turn_id": t["id"],
             },
         )
 
-    threading.Thread(
-        target=_worker, name=f"cleanup-{meeting_id[:8]}", daemon=True
-    ).start()
-
-    return {"ok": True, "started": True, "total": total, "mode": mode}
+    log.info(
+        "cleanup.run done: meeting=%s processed=%d skipped=%d total=%d",
+        meeting_id, processed, skipped, n,
+    )
+    emit_event(
+        "cleanup.done",
+        {
+            "meeting_id": meeting_id,
+            "processed": processed,
+            "skipped": skipped,
+            "total": n,
+        },
+    )
 
 
 # --- Export ----------------------------------------------------------------
@@ -525,15 +556,22 @@ def settings_get() -> dict:
     """
     import keyring
 
+    speicher_fehler = ""
     try:
         tok = keyring.get_password("Blitztext", "hf_token") or ""
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — Anmeldeinformationsverwaltung gestört
+        # Nicht als „kein Token" ausgeben: ist der Credential-Manager gestört,
+        # sagt die Oberfläche sonst „nichts gespeichert", obwohl der Token da
+        # ist — und der Nutzer trägt ihn ein zweites Mal ein.
         tok = ""
+        speicher_fehler = f"{type(e).__name__}: {e}"
 
     last4 = tok[-4:] if tok else ""
     return {
         "hf_token_present": bool(tok),
         "hf_token_hint": f"hf_…{last4}" if tok else "",
+        # Leer, solange alles in Ordnung ist.
+        "credential_store_error": speicher_fehler,
     }
 
 

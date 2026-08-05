@@ -214,7 +214,9 @@ def test_running_job_geht_nach_absturz_zurueck_in_die_schlange(queue, store):
 
     out = q.recover_orphans()
 
-    assert out == {"requeued": 1, "failed": 0}
+    # Nur die betroffenen Zähler prüfen — das Ergebnis darf um weitere
+    # Schlüssel wachsen, ohne dass dieser Test bricht.
+    assert (out["requeued"], out["failed"]) == (1, 0)
     assert jobs.get_job(res["job_id"])["state"] == QUEUED
 
 
@@ -227,7 +229,7 @@ def test_wiederholt_abstuerzende_datei_wird_aufgegeben(queue, store):
 
     out = q.recover_orphans()
 
-    assert out == {"requeued": 0, "failed": 1}
+    assert (out["requeued"], out["failed"]) == (0, 1)
     job = jobs.get_job(res["job_id"])
     assert job["state"] == FAILED
     assert "Versuche" in job["error"]
@@ -276,12 +278,23 @@ def test_clear_finished_raeumt_nur_abgeschlossenes(queue, store):
 # --- RPC: Stapel einreihen --------------------------------------------------
 
 
-def test_queue_enqueue_nimmt_ordner_und_meldet_uebersprungenes(queue, store, tmp_path):
-    """Der Weg, den der Ordner-Drop im UI nehmen wird."""
+def test_queue_enqueue_nimmt_ordner_und_meldet_uebersprungenes(
+    queue, store, tmp_path, monkeypatch
+):
+    """Der Weg, den der Ordner-Drop im UI nimmt."""
     import sidecar.methods  # noqa: F401 — registriert die Handler
     from sidecar.rpc import call_method
 
     q, _events, _audio = queue
+    # `queue.enqueue` startet den Worker, falls er nicht läuft — sonst
+    # sammelten sich Jobs an, die niemand abarbeitet. Für diesen Test wird
+    # die Pipeline deshalb eingesetzt; die Platzhalterdateien hier sind
+    # kein echtes Audio.
+    verarbeitet: list[str] = []
+    monkeypatch.setattr(
+        "sidecar.meeting_pipeline.run_stages", _fake_stages(verarbeitet)
+    )
+
     ordner = tmp_path / "stapel"
     ordner.mkdir()
     (ordner / "a.mp3").write_bytes(b"x")
@@ -293,9 +306,14 @@ def test_queue_enqueue_nimmt_ordner_und_meldet_uebersprungenes(queue, store, tmp
     )
 
     assert res["count"] == 2
-    assert [j["path"].endswith("a.mp3") for j in res["enqueued"]][0] is True
+    assert res["enqueued"][0]["path"].endswith("a.mp3")
     assert any(s["reason"] == "nicht gefunden" for s in res["skipped"])
-    assert [j["state"] for j in jobs.list_jobs()] == [QUEUED, QUEUED]
+    # Beide Dateien sind eingereiht — in welchem Zustand sie gerade stehen,
+    # hängt davon ab, wie weit der Worker schon ist.
+    assert len(jobs.list_jobs()) == 2
+    assert _wait_until(
+        lambda: all(j["state"] == DONE for j in jobs.list_jobs())
+    ), "der Worker muss die Warteschlange auch wirklich abarbeiten"
 
 
 def test_config_get_liefert_die_endungsliste(store):
@@ -306,6 +324,109 @@ def test_config_get_liefert_die_endungsliste(store):
     cfg = call_method("config.get")
 
     assert ".mp3" in cfg["audio_extensions"]
+
+
+def test_wiederanlauf_raeumt_meetings_ohne_job(queue, store):
+    """Meeting-Hülle ohne Job — der Absturz zwischen zwei Schreibvorgängen.
+
+    `create_meeting_shell` committet die Hülle, danach erst wird die Job-Zeile
+    geschrieben. Stirbt der Prozess dazwischen, blieb ein Meeting für immer
+    auf „wird verarbeitet" stehen: `recover_orphans` schaute nur auf Jobs im
+    Zustand `running` und bekam solche Waisen nie zu sehen.
+    """
+    q, _events, _audio = queue
+
+    leer = store.create_meeting(title="Absturz vor der Job-Zeile", status="processing")
+    mit_inhalt = store.create_meeting(title="Absturz im persist", status="processing")
+    store.upsert_speakers(mit_inhalt, [{"label": "Speaker 1"}])
+    sprecher_id = store.get_meeting(mit_inhalt)["speakers"][0]["id"]
+    store.upsert_turns(
+        mit_inhalt,
+        [{"speaker_id": sprecher_id, "idx": 0, "start_ms": 0, "end_ms": 900,
+          "text_raw": "Halb fertig."}],
+    )
+
+    ergebnis = q.recover_orphans()
+
+    assert ergebnis["orphaned_meetings"] == 2
+    assert store.get_meeting(leer) is None, "leere Hülle muss weg"
+    uebrig = store.get_meeting(mit_inhalt)
+    assert uebrig is not None, "Teilarbeit darf nicht verschwinden"
+    assert uebrig["status"] == "error"
+
+
+def test_wiederanlauf_laesst_meetings_mit_offenem_job_in_ruhe(queue, store):
+    """Gegenprobe: wer noch einen wartenden Job hat, wird nicht angefasst."""
+    q, _events, audio = queue
+
+    res = q.enqueue(str(audio))
+    meeting_id = res["meeting_id"]
+
+    q.recover_orphans()
+
+    m = store.get_meeting(meeting_id)
+    assert m is not None
+    assert m["status"] == "processing"
+
+
+def test_shutdown_gibt_laufenden_job_frei_ohne_versuch_zu_verbrauchen(
+    queue, monkeypatch, store
+):
+    """Die App zu schließen ist kein Absturz.
+
+    Vorher endete der Sidecar ohne die Warteschlange anzuhalten: der laufende
+    Job blieb auf ``running``, und der nächste Start wertete das als Absturz
+    und verbrauchte einen der zwei Versuche. Wer eine lange Datei importierte
+    und zweimal dazwischen die App schloss, bekam sie endgültig als „bringt
+    den Import reproduzierbar zum Absturz" abgestempelt — sachlich falsch.
+    """
+    q, _events, audio = queue
+    laeuft = threading.Event()
+    monkeypatch.setattr(
+        "sidecar.meeting_pipeline.run_stages", _fake_stages([], block=laeuft)
+    )
+
+    job_id = q.enqueue(str(audio))["job_id"]
+    q.start()
+    assert _wait_until(lambda: jobs.get_job(job_id)["state"] == RUNNING)
+    assert jobs.get_job(job_id)["attempts"] == 1
+
+    q.shutdown()  # Fenster zu, während der Import läuft
+
+    job = jobs.get_job(job_id)
+    assert job["state"] == QUEUED, "muss zurück in die Warteschlange"
+    assert job["attempts"] == 0, "das Schließen darf keinen Versuch kosten"
+    assert job["started_at"] is None
+    laeuft.set()
+
+
+def test_stop_vergisst_lebenden_worker_nicht(queue):
+    """``stop()`` setzte ``_worker = None`` auch bei überschrittenem Timeout.
+
+    Ein folgendes ``start()`` legte dann einen ZWEITEN Worker an — beide
+    hätten parallel Jobs übernommen, also genau der Parallellauf, den die
+    Warteschlange verhindern soll.
+
+    Geprüft wird gegen einen Platzhalter statt gegen einen echten Thread:
+    ein wirklich hängender Worker müsste den 5-Sekunden-Timeout aussitzen
+    und die DB unter der Fixture wegziehen.
+    """
+    q, _events, _audio = queue
+
+    class HaengenderWorker:
+        def is_alive(self) -> bool:
+            return True
+
+        def join(self, timeout=None) -> None:
+            return None  # läuft in den Timeout, ohne zu enden
+
+    haengt = HaengenderWorker()
+    q._worker = haengt  # type: ignore[assignment]
+
+    q.stop()
+
+    assert q._worker is haengt, "lebenden Worker nicht vergessen"
+    q._worker = None  # Fixture-Teardown nicht mit dem Platzhalter belasten
 
 
 def test_events_melden_start_und_ende(queue, monkeypatch, store):

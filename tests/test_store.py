@@ -106,3 +106,49 @@ def test_titel_aendern(store, sample_meeting):
     m = store.get_meeting(sample_meeting)
     assert m is not None
     assert m["title"] == "Umbenannt"
+
+
+def test_zusammenfuehren_rechnet_die_statistik_neu(store, sample_meeting):
+    """Nach dem Zusammenführen müssen Anteile wieder 100 % ergeben.
+
+    `merge_speakers` überließ das Nachrechnen dem Aufrufer — und keiner der
+    Aufrufer tat es. Oberfläche und Markdown-Export zeigten danach dauerhaft
+    die Anteile von vorher.
+    """
+    m = store.get_meeting(sample_meeting)
+    assert m is not None
+    assert len(m["speakers"]) == 2
+    ziel, quelle = m["speakers"][0]["id"], m["speakers"][1]["id"]
+
+    moved = store.merge_speakers(sample_meeting, quelle, ziel)
+    assert moved > 0
+
+    danach = store.get_meeting(sample_meeting)
+    assert danach is not None
+    assert len(danach["speakers"]) == 1
+    uebrig = danach["speakers"][0]
+    assert uebrig["share_pct"] == 100.0, "ein einziger Sprecher hat 100 %"
+    # Wortzahl muss der Summe aller Turns entsprechen.
+    erwartet = sum(len(t["text_raw"].split()) for t in danach["turns"])
+    assert uebrig["word_count"] == erwartet
+    assert uebrig["duration_ms"] > 0
+
+
+def test_get_meeting_liefert_die_cleanup_stufe_mit(store, sample_meeting):
+    """``cleanup.run`` entscheidet an ``text_clean_mode``, ob ein Turn in
+    dieser Stufe schon bereinigt ist.
+
+    Die Spalte wurde geschrieben, dokumentiert und typisiert — nur in der
+    SELECT-Liste von ``get_meeting`` fehlte sie. Damit war die Bedingung
+    immer falsch: jeder zweite Cleanup-Lauf schickte sämtliche Absätze
+    erneut durchs LLM und überschrieb bereits geprüfte Fassungen.
+    """
+    m = store.get_meeting(sample_meeting)
+    assert m is not None
+    turn_id = m["turns"][0]["id"]
+
+    assert store.set_turn_clean(turn_id, "Guten Morgen.", mode="faithful") is True
+
+    turn = store.get_meeting(sample_meeting)["turns"][0]
+    assert turn["text_clean"] == "Guten Morgen."
+    assert turn["text_clean_mode"] == "faithful"

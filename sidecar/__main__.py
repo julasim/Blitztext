@@ -72,8 +72,11 @@ def _preload_heavy_imports_synchronously() -> None:
             "preload complete (device=%s)",
             DiarizationPipeline.instance().device,
         )
-    except Exception as e:  # noqa: BLE001 — never crash startup
-        log.warning("preload failed (non-fatal): %s", e)
+    except Exception:  # noqa: BLE001 — never crash startup
+        # Mit vollem Traceback: ohne ihn steht im Log nur die Wortmeldung der
+        # obersten Ebene, und die verdeckt gerade beim gebündelten Sidecar,
+        # WORAN der Import wirklich gescheitert ist.
+        log.warning("preload failed (non-fatal)", exc_info=True)
 
 
 def main() -> int:
@@ -109,9 +112,26 @@ def main() -> int:
     except Exception:  # noqa: BLE001 — we log the full traceback
         log.exception("sidecar: fatal error")
         return 1
+    finally:
+        # Warteschlange geordnet anhalten. Ohne das bleibt ein laufender Job
+        # auf "running" stehen; der nächste Start hält das für einen Absturz
+        # und verbraucht einen der zwei Versuche. Zweimal die App während
+        # desselben Imports schließen hätte die Datei sonst endgültig als
+        # "bringt den Import reproduzierbar zum Absturz" abgestempelt.
+        _stop_queue(log)
 
     log.info("sidecar: stdin closed, exiting cleanly")
     return 0
+
+
+def _stop_queue(log: logging.Logger) -> None:
+    """Worker anhalten und laufenden Job wieder freigeben."""
+    try:
+        from sidecar.jobs import JobQueue
+
+        JobQueue.instance().shutdown()
+    except Exception:  # noqa: BLE001 — Herunterfahren darf nie werfen
+        log.exception("Warteschlange konnte nicht geordnet angehalten werden")
 
 
 if __name__ == "__main__":

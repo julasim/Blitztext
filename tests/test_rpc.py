@@ -8,6 +8,8 @@ ungetestet zu lassen.
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +38,36 @@ def test_falsche_parameter_werden_zu_invalid_params():
 
     assert resp is not None
     assert resp["error"]["code"] == rpc.INVALID_PARAMS
+
+
+def test_typeerror_aus_der_methode_ist_kein_parameterfehler():
+    """Ein `TypeError` **im** Methodenrumpf ist ein echter Fehler.
+
+    Vorher lag ein `except TypeError` um den Aufruf herum: jeder TypeError aus
+    dem Inneren wurde zu `INVALID_PARAMS` — mit der Meldung des inneren
+    Fehlers, aber **ohne Traceback**. Man sah also „ungültige Parameter" und
+    hatte keinen Hinweis, wo es wirklich knallte. Die Signatur wird jetzt
+    vorab geprüft; alles danach fällt in den generischen Zweig.
+    """
+
+    @rpc.method("test.wirft_typeerror")
+    def _wirft() -> dict:
+        return {"summe": 1 + "zwei"}  # type: ignore[operator]
+
+    try:
+        resp = rpc._dispatch(
+            {"jsonrpc": "2.0", "id": 7, "method": "test.wirft_typeerror"}
+        )
+
+        assert resp is not None
+        assert resp["error"]["code"] == rpc.INTERNAL_ERROR, (
+            "TypeError aus dem Rumpf darf nicht als Parameterfehler erscheinen"
+        )
+        spur = resp["error"]["data"]["traceback"]
+        assert "TypeError" in spur
+        assert "_wirft" in spur, "der Traceback muss bis in den Rumpf reichen"
+    finally:
+        rpc._methods.pop("test.wirft_typeerror", None)
 
 
 def test_notification_bekommt_keine_antwort():
@@ -111,3 +143,29 @@ def test_events_schreiben_umlaute_unescaped(capsys):
 
     assert "geöffnet" in line
     assert json.loads(line)["params"]["message"].endswith("geöffnet werden")
+
+
+def test_versionen_stimmen_ueberein():
+    """Die Version steht an drei Stellen — sie müssen zusammenpassen.
+
+    Die Statusleiste der App zeigt `rpc.__version__`. Das stand bis
+    2026-08-05 auf `0.1.0-alpha`, während das Produkt als 0.2.0 gebaut und
+    ausgeliefert wurde — und ausgerechnet die Abnahmeliste in BUILD.md
+    verlangt einen Blick auf genau diese Anzeige.
+    """
+    wurzel = Path(__file__).resolve().parent.parent
+
+    tauri = json.loads((wurzel / "app/src-tauri/tauri.conf.json").read_text("utf-8"))
+    paket = json.loads((wurzel / "app/package.json").read_text("utf-8"))
+    cargo = (wurzel / "app/src-tauri/Cargo.toml").read_text("utf-8")
+    treffer = re.search(r'(?m)^version\s*=\s*"([^"]+)"', cargo)
+    assert treffer, "Cargo.toml ohne version-Feld"
+
+    versionen = {
+        "tauri.conf.json": tauri["version"],
+        "Cargo.toml": treffer.group(1),
+        "package.json": paket["version"],
+        "sidecar/rpc.py": rpc.__version__,
+    }
+
+    assert len(set(versionen.values())) == 1, f"Versionen driften: {versionen}"

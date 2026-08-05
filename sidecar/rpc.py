@@ -8,7 +8,7 @@ Design notes
 ------------
 * No ports, no sockets. Tied to process lifetime — Tauri spawns the sidecar,
   reads/writes its pipes, kills it on shutdown.
-* Blocking dispatch for MVP. Long-running methods (e.g. `meeting.import_file`)
+* Blocking dispatch for MVP. Long-running methods (e.g. `queue.enqueue`)
   should offload to a worker thread themselves and use `emit_event(...)` to
   push progress notifications to the Tauri side.
 * No authentication — the pipe is a private process channel.
@@ -19,13 +19,15 @@ for the authoritative list.
 
 from __future__ import annotations
 
+import inspect
 import json
+import logging
 import sys
 import threading
 import traceback
 from typing import Any, Callable
 
-__version__ = "0.1.0-alpha"
+__version__ = "0.2.0"
 
 # -- Registry ---------------------------------------------------------------
 
@@ -82,11 +84,26 @@ class RpcError(Exception):
 _write_lock = threading.Lock()
 
 
-def _write(obj: dict) -> None:
+def _write(obj: dict) -> bool:
+    """Eine ndjson-Zeile rausschreiben. ``False``, wenn das fehlgeschlagen ist.
+
+    Kein Wurf nach oben: ein einzelner Schreibfehler hat bisher den gesamten
+    Sidecar beendet (beobachtet als ``OSError: [Errno 22]`` — Windows-Pipes
+    lehnen sehr große Zeilen ab). Da Events aus Worker-Threads kommen, riss
+    das auch laufende Importe mit. Ist die Gegenstelle wirklich fort, merkt
+    ``serve_stdio`` das ohnehin am geschlossenen stdin.
+    """
     line = json.dumps(obj, ensure_ascii=False)
     with _write_lock:
-        sys.stdout.write(line + "\n")
-        sys.stdout.flush()
+        try:
+            sys.stdout.write(line + "\n")
+            sys.stdout.flush()
+            return True
+        except OSError as e:
+            logging.getLogger("sidecar").error(
+                "stdout-Schreibfehler bei %d Bytes: %s", len(line), e
+            )
+            return False
 
 
 def emit_event(name: str, payload: dict | None = None) -> None:
@@ -130,22 +147,30 @@ def _dispatch(req: dict) -> dict | None:
             req_id, METHOD_NOT_FOUND, f"method '{method_name}' not found"
         )
 
+    if isinstance(params, dict):
+        args, kwargs = (), params
+    elif isinstance(params, list):
+        args, kwargs = tuple(params), {}
+    elif params is None:
+        args, kwargs = (), {}
+    else:
+        return _error_response(
+            req_id, INVALID_PARAMS, "'params' must be object, array, or omitted"
+        )
+
+    # Signatur VOR dem Aufruf prüfen. Vorher fing ein `except TypeError` um
+    # den Aufruf herum auch jeden TypeError aus dem Funktionsinneren ab und
+    # meldete ihn als Parameterfehler — ohne Traceback, also ohne jeden
+    # Hinweis, wo er wirklich entstand.
     try:
-        if isinstance(params, dict):
-            result = fn(**params)
-        elif isinstance(params, list):
-            result = fn(*params)
-        elif params is None:
-            result = fn()
-        else:
-            return _error_response(
-                req_id, INVALID_PARAMS, "'params' must be object, array, or omitted"
-            )
+        inspect.signature(fn).bind(*args, **kwargs)
+    except TypeError as e:
+        return _error_response(req_id, INVALID_PARAMS, str(e))
+
+    try:
+        result = fn(*args, **kwargs)
     except RpcError as e:
         return _error_response(req_id, e.code, e.message, e.data)
-    except TypeError as e:
-        # Most often: bad arg names / arity
-        return _error_response(req_id, INVALID_PARAMS, str(e))
     except Exception as e:  # noqa: BLE001 — we want to catch everything
         return _error_response(
             req_id,
@@ -182,17 +207,25 @@ def serve_stdio() -> None:
         except json.JSONDecodeError as e:
             _write(_error_response(None, PARSE_ERROR, f"invalid JSON: {e}"))
             continue
-        if isinstance(req, list):
-            # Batch — process each, emit array response (MVP: serial)
-            responses = [r for r in (_dispatch(item) for item in req) if r is not None]
-            if responses:
-                _write(responses)  # type: ignore[arg-type]
-        elif isinstance(req, dict):
+        if isinstance(req, dict):
             response = _dispatch(req)
-            if response is not None:
-                _write(response)
+            if response is not None and not _write(response):
+                # Die Antwort ging nicht raus — meist, weil sie zu groß für
+                # die Pipe war. Dann lieber einen kurzen Fehler schicken als
+                # den Aufrufer in den 10-Minuten-Timeout laufen zu lassen.
+                _write(
+                    _error_response(
+                        response.get("id"),
+                        INTERNAL_ERROR,
+                        "Antwort konnte nicht übertragen werden (zu groß?)",
+                    )
+                )
         else:
-            _write(_error_response(None, INVALID_REQUEST, "top-level must be object or array"))
+            _write(
+                _error_response(
+                    None, INVALID_REQUEST, "top-level must be an object"
+                )
+            )
 
 
 # -- Built-in methods -------------------------------------------------------
