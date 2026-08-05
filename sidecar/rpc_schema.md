@@ -15,7 +15,7 @@ Transport: line-delimited JSON-RPC 2.0 over stdin/stdout of the sidecar process.
 
 ## Conventions
 
-- Method names use dot notation: `namespace.action` (`meeting.import_file`, `speaker.rename`).
+- Method names use dot notation: `namespace.action` (`queue.enqueue`, `speaker.rename`).
 - All IDs are stringy (UUID4).
 - Timestamps: `created_at` is ISO-8601 UTC; durations are milliseconds as integers.
 - **Langlaufende Methoden antworten sofort** (meist nur mit der `meeting_id`) und
@@ -24,7 +24,10 @@ Transport: line-delimited JSON-RPC 2.0 over stdin/stdout of the sidecar process.
 - Errors follow JSON-RPC 2.0 (`code`, `message`, optional `data`). Application-specific codes:
   - `-32001` `APP_PIPELINE_FAILED` — transcription/diarization pipeline error.
   - `-32002` `APP_NOT_FOUND` — referenced meeting/speaker does not exist.
-  - `-32003` `APP_DEPENDENCY_MISSING` — Ollama not reachable, HF token missing, etc.
+  - `-32003` `APP_DEPENDENCY_MISSING` — eine lokale Abhängigkeit fehlt;
+    geworfen von `cleanup.run`, wenn Ollama nicht erreichbar ist.
+  - `-32000` — allgemeiner Anwendungsfehler ohne eigenen Code
+    (`settings.test_hf_token` meldet damit einen fehlgeschlagenen Prüflauf).
 
 ## Method index (status legend: ✅ implemented · ⬜ planned)
 
@@ -33,13 +36,12 @@ Transport: line-delimited JSON-RPC 2.0 over stdin/stdout of the sidecar process.
 | Status | Method | Request | Response |
 |---|---|---|---|
 | ✅ | `ping` | — | `{ok, version}` |
-| ✅ | `config.get` | — | `{appdata, models_dir, meetings_dir, db_path, cuda_available, ollama_available, models[], audio_extensions[]}` — `models` ist `{id, label, hint}[]`; `id` geht als `whisper_model` durch die Queue |
+| ✅ | `config.get` | — | `{appdata, models_dir, meetings_dir, db_path, cuda_available, ollama_available, whisper_default, cleanup_model, models[], audio_extensions[]}` — `models` ist `{id, label, hint}[]`; `id` geht als `whisper_model` durch die Queue. `whisper_default` ist der **tatsächlich** gewählte Vorgabewert (ohne GPU `medium`), nicht der erste Listeneintrag |
 
 ### Meetings
 
 | Status | Method | Request | Response |
 |---|---|---|---|
-| ✅ | `meeting.import_file` | `{path, title?, language="de", whisper_model?, min_speakers?, max_speakers?}` | `{meeting_id, job_id}` — reiht in die Warteschlange ein und kehrt sofort zurück |
 | ✅ | `meeting.list` | `{limit=100, offset=0}` | `MeetingListItem[]` |
 | ✅ | `meeting.get` | `{id}` | `MeetingFull` |
 | ✅ | `meeting.delete` | `{id}` | `{ok}` |
@@ -68,7 +70,8 @@ type Job = {
                               // der Job-Eintrag bleibt als Historie
   source_path: string
   params: { language: string; whisper_model: string;
-            min_speakers: number | null; max_speakers: number | null }
+            min_speakers: number | null; max_speakers: number | null;
+            hotwords: string | null }   // Fachvokabular, nur für Whisper
   state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
   position: number            // FIFO-Schlüssel, monoton steigend
   attempts: number            // Wiederanläufe nach Absturz, max. 2
@@ -113,7 +116,7 @@ Warteschlange, höchstens zweimal; danach `failed`.
 
 | Status | Method | Request | Response |
 |---|---|---|---|
-| ✅ | `settings.get` | — | `{hf_token_present, hf_token_hint}` |
+| ✅ | `settings.get` | — | `{hf_token_present, hf_token_hint, credential_store_error}` — `credential_store_error` ist leer, solange die Windows-Anmeldeinformationsverwaltung antwortet. Ist sie gestört, wäre „kein Token“ eine falsche Auskunft |
 | ✅ | `settings.get_vocabulary` | — | `{vocabulary}` — dauerhafte Firmen-Wortliste aus der `settings`-Tabelle |
 | ✅ | `settings.set_vocabulary` | `{vocabulary}` | `{ok}` |
 | ✅ | `settings.set_hf_token` | `{token}` | `{ok, stored}` — leerer String löscht die Credential |
@@ -126,13 +129,13 @@ Der HF-Token liegt im Windows-Anmeldeinformationsmanager (`keyring`, Dienst
 
 | Event | Payload |
 |---|---|
-| `meeting.progress` | `{meeting_id, stage, pct, eta_sec}` — `stage ∈ {decode, transcribe, diarize, merge, persist}`. **`pct` ist 0..1**, nicht 0..100, und bereits über alle fünf Stages gewichtet (5/55/30/5/5 %) |
+| `meeting.progress` | `{meeting_id, stage, pct, stage_elapsed_sec}` — `stage ∈ {decode, transcribe, diarize, merge, persist}`. **`pct` ist 0..1**, nicht 0..100, und bereits über alle fünf Stages gewichtet (5/55/30/5/5 %). **`stage_elapsed_sec` ist die Laufzeit der gerade ABGESCHLOSSENEN Stufe, keine Restzeit** — das Feld hieß bis 2026-08-05 `eta_sec`, und die Oberfläche zeigte es folgerichtig als „noch ~X s" an. Eine Restzeit schätzt das Frontend selbst aus `pct` |
 | `meeting.done` | `{meeting_id}` |
 | `meeting.error` | `{meeting_id, message}` |
 | `meeting.warning` | `{meeting_id, stage, message, fallback}` — nicht-fatal. Kommt, wenn pyannote nicht lädt: der Import läuft mit einem Sprecher weiter (`fallback: "single_speaker"`) |
 | `cleanup.progress` | `{meeting_id, processed, skipped, total, turn_id}` |
 | `cleanup.done` | `{meeting_id, processed, skipped, total}` |
-| `cleanup.error` | `{meeting_id, turn_id?, message}` — pro Turn, bricht den Lauf **nicht** ab |
+| `cleanup.error` | `{meeting_id, turn_id?, message, fatal}` — **`fatal: false`** heißt: ein einzelner Absatz ging schief, der Lauf geht weiter (nur dann folgt noch ein `cleanup.done`). Nur bei `fatal: true` darf die UI ihre Fortschrittsanzeige beenden |
 | `queue.enqueued` | `{job_id, meeting_id, path}` |
 | `queue.job_started` | `{job_id, meeting_id, path}` |
 | `queue.job_done` | `{job_id, meeting_id}` |
@@ -150,7 +153,7 @@ aus `app/src/lib/rpc.ts`.
 ```ts
 type Turn = {
   id: string
-  speaker_id: string
+  speaker_id: string | null   // ON DELETE SET NULL beim Löschen des Sprechers
   idx: number
   start_ms: number
   end_ms: number
@@ -201,5 +204,5 @@ type MeetingFull = MeetingListItem & {
 ```jsonc
 // Progress notification (no id, no response expected)
 {"jsonrpc":"2.0","method":"meeting.progress",
- "params":{"meeting_id":"ab12","stage":"transcribe","pct":0.42,"eta_sec":73}}
+ "params":{"meeting_id":"ab12","stage":"transcribe","pct":0.42,"stage_elapsed_sec":73}}
 ```

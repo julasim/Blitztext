@@ -32,7 +32,7 @@ arbeitet sie offline.
 | `benchmark/` | Messaufbau: WER, Halluzinationsschleifen und Sprecheranzahl gegen korrigierte Referenzen. Nicht Teil der App. |
 | `tests/` | pytest — siehe unten. |
 | `transcribe.py` | CLI: eine Audiodatei durch die volle Pipeline → Markdown. Ohne GUI. |
-| `BUILD.md` | Release-Prozess (PyInstaller-Sidecar + Tauri-Installer). |
+| `BUILD.md` | Release-Prozess (PyInstaller-Sidecar + portabler Ordner). |
 | `PLAN.md` | **Historisch** (April 2026). Nennt gelöschte Dateien; für die Architektur-Begründungen weiter nützlich, nicht als Aufgabenliste. |
 
 Zwei Rückbauten am 2026-07-23, beide in der Historie erhalten: der PyQt-Tray
@@ -75,7 +75,7 @@ ein gebauter Sidecar wird dafür nicht gebraucht.
 ## Tests
 
 ```powershell
-.\.venv-sidecar\Scripts\python.exe -m pytest            # 133 Tests, ~10 s
+.\.venv-sidecar\Scripts\python.exe -m pytest            # 152 Tests, ~12 s
 .\.venv-sidecar\Scripts\python.exe -m pytest --slow     # + Whisper/pyannote über eine echte MP3
 .\.venv-sidecar\Scripts\python.exe -m pytest --ollama   # + LLM-Cleanup gegen lokales Ollama
 ```

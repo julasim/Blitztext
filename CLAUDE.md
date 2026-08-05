@@ -99,24 +99,23 @@ plus CUDA-Verifikation.
 
 ## Offene Punkte / nächste Schritte
 
+- **Das ausgelieferte 0.2.0-Paket ist unbrauchbar — nicht verteilen.** Sein
+  Sidecar kann `pyannote.audio` nicht laden, jedes damit erzeugte Transkript
+  hat **genau einen Sprecher**. Ursache gefunden am 2026-08-05: `pandas` stand
+  in `excludes` der Spec, wird aber von `pyannote.database.util` auf
+  Modulebene importiert (Details im Stolperstein unten). Behoben; ein neues
+  Paket muss gebaut und nach der Prüfliste in `BUILD.md` abgenommen werden.
 - **`speaker.sample` fehlt.** Der Plan (Schritt 1 + 4.9) sieht beim
-  Sprecher-Umbenennen ein **5-Sekunden-Audio-Snippet** vor, damit man hört, wen man
-  gerade benennt. Rename und Merge sind in `SpeakerList.tsx` fertig, das Snippet
-  nicht — es gibt weder die RPC-Methode in `sidecar/methods.py` noch ein
-  `<audio>`-Element im Popover.
-- **LRU-Deckel auf `_transcriber_cache`** (`meeting_pipeline.py`): wächst
-  unbegrenzt, Schlüssel ist `modell:sprache:device`. Heute liegt genau ein
-  Eintrag drin; sobald die UI Modelle wählen lässt, liegen `large-v3`,
-  `turbo` und `medium` gleichzeitig im VRAM.
-- **Danach:** Sprache/Modell/Diarization-Schalter im Import-UI (die Parameter
-  existieren in `import_file` bereits, sie werden nur nicht durchgereicht) ·
+  Sprecher-Umbenennen ein **5-Sekunden-Audio-Snippet** vor, damit man hört,
+  wen man gerade benennt. Rename und Merge sind in `SpeakerList.tsx` fertig,
+  das Snippet nicht — es gibt weder die RPC-Methode in `sidecar/methods.py`
+  noch ein `<audio>`-Element im Popover. Bei fremden Aufnahmen wichtiger als
+  bei eigenen.
+- **Danach:** Sprach- und Diarization-Schalter im Import-UI (die Parameter
+  gehen bereits durch `queue.enqueue`, nur die Bedienelemente fehlen) ·
   SRT/VTT/DOCX aus `words_json` · ID3-Tags für Titel und Datum (PyAV liefert
   sie mit, keine neue Dependency) · `meeting.reprocess` gegen die schon
   kopierte Datei.
-- **Phase-1-Rest:** `speaker.sample` fehlt — beim Sprecher-Umbenennen soll
-  man eine 5-Sekunden-Hörprobe hören. Rename und Merge sind in
-  `SpeakerList.tsx` fertig, das Snippet nicht (weder RPC-Methode noch
-  `<audio>`-Element). Bei fremden Aufnahmen wichtiger als bei eigenen.
 - **`methods.py` aufteilen**, sobald das zweite Exportformat kommt: die
   Markdown-Formatierung gehört in ein `exporters/`-Modul, nicht neben die
   RPC-Wrapper.
@@ -147,7 +146,7 @@ cd app; npx tauri dev          # NICHT `npm run tauri` — dieses Script fehlt
 
 # Frontend allein
 cd app; npm run build          # tsc -b && vite build
-cd app; npm run lint           # eslint (aktuell 4 Fehler, s. Stolpersteine)
+cd app; npm run lint           # eslint — grün
 
 # Rust allein (schnellster Syntax-/Typcheck der Shell)
 cd app\src-tauri; cargo check
@@ -159,7 +158,7 @@ cd app\src-tauri; cargo check
 **Tests** — pytest, Konfiguration in `pytest.ini`:
 
 ```powershell
-.\.venv-sidecar\Scripts\python.exe -m pytest            # 133 Tests, ~10 s
+.\.venv-sidecar\Scripts\python.exe -m pytest            # 152 Tests, ~12 s
 .\.venv-sidecar\Scripts\python.exe -m pytest --slow     # + echte MP3 durch Whisper/pyannote
 .\.venv-sidecar\Scripts\python.exe -m pytest --ollama   # + Cleanup gegen lokales Ollama
 .\.venv-sidecar\Scripts\python.exe -m pytest -k merger  # einzelne Datei/Fall
@@ -230,10 +229,20 @@ Was man über die Pipeline wissen muss:
 - Diarization ist **best effort**: fällt pyannote aus (Token, Lizenz, CUDA),
   läuft der Import mit leerer Segmentliste weiter → ein Sprecher, Split an
   langen Pausen, `meeting.warning`-Event statt Abbruch.
-- Persistenz: SQLite unter `%APPDATA%\Blitztext\meetings.db` (3 Tabellen —
-  `meetings`/`speakers`/`turns`, Sprecher-Statistiken denormalisiert), Audio je
-  Meeting unter `%APPDATA%\Blitztext\meetings\<uuid>\`. Migrationen siehe
-  `_MIGRATIONS` in `meeting_store.py`.
+- Persistenz: SQLite unter `%APPDATA%\Blitztext\meetings.db` (5 Tabellen —
+  `meetings`/`speakers`/`turns` plus `jobs` aus Migration 2 und `settings` aus
+  Migration 3; Sprecher-Statistiken denormalisiert), Audio je Meeting unter
+  `%APPDATA%\Blitztext\meetings\<uuid>\`. Migrationen siehe `_MIGRATIONS` in
+  `meeting_store.py` — **jeder Schritt läuft in einer eigenen Transaktion**,
+  sonst macht ein Absturz mitten in einem `ALTER TABLE` die Datei dauerhaft
+  unöffenbar.
+- **Eine SQLite-Verbindung, mehrere Threads.** Zugriffe laufen über
+  `_SerialisierteVerbindung` hinter `_db_lock`; `_transaction()` hält die
+  Sperre über die ganze Transaktion. Transaktionen gehören in SQLite der
+  **Verbindung**, nicht dem Thread — ohne Sperre landete ein Schreibzugriff
+  aus einem anderen Thread in einer fremden Transaktion und verschwand mit
+  deren Rollback. Auch `close()` nimmt die Sperre, sonst stirbt der Prozess
+  an einer Access Violation aus dem C-Code.
 
 ## Zentrale Bausteine
 
@@ -266,8 +275,12 @@ Was man über die Pipeline wissen muss:
 **Tests** (`tests/`, pytest): `conftest.py` (isolierte DB und Queue je Test,
 Opt-in-Flags), `test_merger.py`, `test_store.py`, `test_migrations.py`,
 `test_export.py`, `test_rpc.py`, `test_jobs.py`, `test_audio_io.py`,
-`test_vocabulary.py`, `test_parakeet.py`, `test_benchmark.py`; markiert und
-übersprungen: `test_pipeline_mp3.py` (`--slow`), `test_cleanup.py`
+`test_vocabulary.py`, `test_parakeet.py`, `test_benchmark.py`,
+`test_cleanup_mechanik.py` (Ablauflogik des Cleanups **ohne** LLM),
+`test_packaging.py` (was in `excludes` steht, darf zur Laufzeit nicht
+gebraucht werden); markiert und übersprungen: `test_pipeline_mp3.py` und
+`test_sidecar_start.py` (`--slow`; letzterer startet den Sidecar als echten
+Prozess und prüft stdio-Transport plus RPC-Vertrag), `test_cleanup.py`
 (`--ollama`).
 
 **Tauri-App** (`app/`):
@@ -347,10 +360,17 @@ Opt-in-Flags), `test_merger.py`, `test_store.py`, `test_migrations.py`,
   nur für Datei-I/O. Wir übergeben In-Memory-Tensoren — exakt der von der
   Warnung selbst empfohlene Weg. Nicht „reparieren", nicht ffmpeg
   installieren.
-- **Abbruch greift nicht während der Diarization.** Prüfpunkte gibt es an den
-  Stage-Grenzen und nach jedem Whisper-Segment; pyannote meldet keinen
-  Fortschritt, also wartet ein Abbruch dort, bis sie fertig ist. Bewusst so
-  belassen — ein Knopf, der lügt, wäre schlimmer als einer, der wartet.
+- **Wie schnell ein Abbruch greift, hängt vom Modell ab.** Prüfpunkte liegen
+  an den Stage-Grenzen und in `on_progress`:
+  - **Whisper** meldet nach jedem Segment — Abbruch also binnen Sekunden.
+    (Meldet faster-whisper keine Gesamtdauer, kommt der Rückruf trotzdem,
+    nur mit Fortschritt 0; sonst gäbe es dort gar keinen Prüfpunkt.)
+  - **Parakeet** meldet je 240-Sekunden-Fenster — im ungünstigsten Fall
+    wartet ein Abbruch also vier Minuten. Die Fenstergröße ist qualitäts-
+    relevant (Naht zwischen den Fenstern) und wird dafür nicht verkleinert.
+  - **pyannote** meldet gar nichts; dort wartet ein Abbruch, bis die
+    Diarization fertig ist. Bewusst so belassen — ein Knopf, der lügt, wäre
+    schlimmer als einer, der wartet.
 - **Ein `running`-Job beim Start = Absturz.** Nur ein Prozess besitzt die DB.
   `JobQueue.recover_orphans()` reiht solche Jobs neu ein, höchstens
   `MAX_ATTEMPTS` (2) mal — sonst dreht eine Datei, die den Prozess
@@ -369,12 +389,120 @@ Opt-in-Flags), `test_merger.py`, `test_store.py`, `test_migrations.py`,
 - **Nur function-local importierte Module gehören in `build-sidecar.spec`.**
   PyInstaller sieht sie beim Bytecode-Scan nicht; Pakete mit Datendateien
   (`onnx_asr` → NeMo-Preprocessor-Gewichte) brauchen zusätzlich
-  `collect_all`. Sonst läuft der Dev-Build und der Installer bricht auf der
+  `collect_all`. Sonst läuft der Dev-Build und das Paket bricht auf der
   Zielmaschine ab.
+- **`excludes` in der Spec ist gefährlicher als es aussieht.** Was dort steht,
+  fehlt im Paket — auch wenn eine *fremde* Bibliothek es braucht. `pandas`
+  stand mit dem Vermerk „wir nutzen es nicht" auf der Liste; `pyannote.database.util`
+  importiert es aber auf Modulebene, und diese Datei liegt in der Importkette
+  von `pyannote.audio`. Folge: pyannote lud im gepackten Sidecar nicht, die
+  Sprechertrennung fiel **still** aus, und die Fehlermeldung zeigte auf etwas
+  ganz anderes. In der Dev-venv ist pandas installiert — im Dev-Modus war
+  also alles grün. `tests/test_packaging.py` prüft das jetzt: der schnelle
+  Test hält `pandas` fest, der `--slow`-Test importiert die echte
+  Laufzeitkette und vergleicht `sys.modules` gegen die ganze excludes-Liste.
+- **Ein fehlender Ordner in `_internal` beweist gar nichts.** PyInstaller legt
+  reine Python-Pakete ins eingebettete **PYZ-Archiv** (in der EXE), nicht als
+  Verzeichnis daneben. Wer prüfen will, ob ein Modul mitgepackt wurde, liest
+  das Archiv (`PyInstaller.archive.readers`, ~9200 Module) — ein
+  `Test-Path _internal\torchmetrics` ist wertlos und führt in die Irre.
+  Genauso wenig taugt der CArchive-Inhalt der EXE: dort stehen im onedir-Modus
+  nur 14 Loader-Einträge.
+- **Die Version steht an VIER Stellen** (`tauri.conf.json`, `Cargo.toml`,
+  `app/package.json`, `sidecar/rpc.py`). Die Statusleiste der App zeigt die
+  aus `rpc.py` — sie stand einmal ein ganzes Release lang auf `0.1.0-alpha`.
+  `tests/test_rpc.py::test_versionen_stimmen_ueberein` vergleicht alle vier.
+- **Fehlermeldungen, die eine Ursache behaupten, statt sie zu zeigen, kosten
+  Stunden.** `diarization.py` übersetzte jeden `ImportError` in „pyannote.audio
+  ist nicht installiert" — im gepackten Sidecar ist pyannote aber vorhanden
+  und der Import scheitert an etwas anderem. Bei Wrapper-Meldungen immer den
+  ursprünglichen Fehler mitgeben (`raise ... from e` reicht nicht, wenn nur
+  `str(e)` geloggt wird).
 
 ---
 
 ## Änderungslog
+
+- 2026-08-05 — **Vollprüfung mit vier Prüf-Agenten und Sanierungsrunde.**
+  Anlass: Prüfauftrag über Installer, Backend, Frontend. Rund 60 Befunde,
+  davon die schweren behoben; **152 Tests** (vorher 133), TypeScript, ESLint
+  und Build grün.
+  - **Der Befund, der alles überlagert:** die ausgelieferte 0.2.0 kann
+    **keine Sprechertrennung**. Der gepackte Sidecar scheitert am
+    pyannote-Import (im Produktionslog gefunden, mit isoliertem `APPDATA`
+    reproduziert), die Entwicklungsversion nicht.
+    **Ursache: `pandas` stand in `excludes`** — `pyannote.database.util`
+    importiert es auf Modulebene, mitten in der Importkette von
+    `pyannote.audio`. In der Dev-venv ist pandas installiert, deshalb fiel
+    es dort nie auf.
+    Verschärft durch zwei Umstände: `meeting.warning` hatte **keinen
+    Abnehmer** im Frontend, der Ausfall war also unsichtbar; und die
+    Fehlermeldung behauptete pauschal „pyannote.audio ist nicht
+    installiert", obwohl das Paket vorhanden ist. Erst nachdem die Meldung
+    den echten Fehler mit ausgab und der Preload den vollen Traceback
+    loggte, war die Ursache in einem einzigen Lauf sichtbar. Zwei
+    Zwischenvermutungen davor waren falsch (fehlende Paketordner im
+    `_internal`; ein selbstgebauter Import-Blocker, der nur sein eigenes
+    Verhalten maß). Neu: `tests/test_packaging.py` gegen genau diese
+    Fehlerklasse.
+  - **Datenverlust-Pfad geschlossen:** eine SQLite-Verbindung, mehrere
+    Threads und explizite Transaktionen — ein Schreibzugriff aus Thread B
+    landete in der offenen Transaktion von Thread A und verschwand mit deren
+    Rollback. Beides an Wegwerf-DBs nachgestellt und nach dem Fix erneut
+    geprüft. Dabei fand ein neuer Test, dass `close()` den Prozess mit einer
+    **Access Violation** beenden kann, wenn der Worker die Verbindung noch
+    benutzt.
+  - **Migration konnte die DB unbrauchbar machen:** `ALTER TABLE ADD COLUMN`
+    kennt kein `IF NOT EXISTS`, und der Versionsstempel lief getrennt. Jetzt
+    ein Schritt = eine Transaktion (`PRAGMA user_version` **ist**
+    transaktional, eigens verifiziert).
+  - **Sechs stumme Schreibpfade im Frontend** melden sich jetzt über ein
+    gemeinsames `actionError` samt Banner. Dazu: `meeting.warning`,
+    `cleanup.progress` und `queue.recovered` abonniert, Listener-Leck beim
+    Doppel-Mount geschlossen, Fertig-Hinweis holt nicht mehr das komplette
+    Meeting über die Pipe.
+  - **`eta_sec` war nie eine Restzeit** — es ist die Laufzeit der gerade
+    abgeschlossenen Stufe, angezeigt als „noch ~X s". Feld in
+    `stage_elapsed_sec` umbenannt (auch in Benchmark und Schema), Restzeit
+    wird im Frontend aus dem Fortschritt hochgerechnet.
+  - **Zweimal die App schließen** kostete eine Datei endgültig ihre zwei
+    Versuche, mit falscher Begründung. `JobQueue.shutdown()` gibt den
+    laufenden Job frei, ohne einen Versuch zu verbrauchen.
+  - **Version an vier Stellen vereinheitlicht** (0.2.0); die Statusleiste
+    zeigte `0.1.0-alpha`. `test_versionen_stimmen_ueberein` hält das fest.
+  - Entfernt: `meeting.import_file` (zweiter Einreih-Weg ohne Aufrufer und
+    **ohne** `hotwords`), Batch-Zweig im RPC. `APP_DEPENDENCY_MISSING` wird
+    jetzt geworfen: `cleanup.run` prüft Ollama vorab, statt alle Absätze
+    einzeln auflaufen zu lassen.
+  - `npm run lint` ist grün — ESLint lief über den gepackten Sidecar unter
+    `src-tauri`; die Ignore-Regel fehlte. `strict` in `tsconfig.app.json`
+    eingeschaltet (der Bestand bestand die Prüfung ohne einen Befund).
+  - **Nachgezogen in derselben Runde:** Waisen-Erkennung für Meetings ohne
+    Job (ein Absturz zwischen Hülle und Job-Zeile ließ sie ewig auf „wird
+    verarbeitet" stehen) · Signaturprüfung vor dem Methodenaufruf, damit ein
+    `TypeError` aus dem Rumpf nicht mehr als Parameterfehler **ohne
+    Traceback** erscheint · Keyring-Ausfall wird nicht mehr als „kein Token"
+    ausgegeben · Vokabular geht bei Parakeet nicht mehr mit (Feld war
+    ausgegraut, der Wert ging trotzdem raus) · Sprecher-Statistik wird nach
+    dem Zusammenführen neu gerechnet · Doppelstart-Schutz für den Cleanup.
+  - **Kleinbefunde zum Schluss:** editierbarer Titel behandelt jetzt Enter
+    und Escape (im `contentEditable` fügte Enter einen Zeilenumbruch ein) und
+    stellt bei leerer Eingabe den alten Titel wieder her — vorher blieb die
+    leere Überschrift bis zum nächsten Rerender stehen. Toter Zustandswert
+    `"error"` in `MeetingImport` entfernt (gesetzt, nie gelesen), Typ
+    `ModelChoice` statt inline dupliziert, falscher Kommentar in
+    `Settings.tsx` über Felder, die `settings.get` seit Juli nicht liefert.
+    **Nicht entfernt**, obwohl als „toter Code" gemeldet:
+    `condition_on_previous_text` und `temperature` — beides dokumentierte
+    Stellschrauben mit Vorgabewert, für die erste stehen Messwerte in den
+    Stolpersteinen.
+  - **Drei neue Testdateien** schließen die größten Deckungslücken:
+    `test_packaging.py` (excludes gegen die echte Laufzeitkette),
+    `test_cleanup_mechanik.py` (Cleanup-Ablauf ohne LLM — hing vorher
+    komplett an `--ollama` und lief damit nie), `test_sidecar_start.py`
+    (`--slow`: Sidecar als **Prozess**, stdio-Transport, RPC-Vertrag gegen
+    die vom Frontend gelesenen Felder). Jeder neue Test wurde gegengeprüft:
+    mit zurückgenommenem Fix rot, mit Fix grün.
 
 - 2026-08-05 — **Version 0.2.0 gebaut und als portabler Ordner
   ausgeliefert** (`release\Blitztext-0.2.0-portable\`, 4,72 GB).

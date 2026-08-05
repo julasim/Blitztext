@@ -84,25 +84,42 @@ Zum Verteilen den ganzen Ordner auf den NAS legen.
 
 ## Version anheben
 
-Die Version steht an zwei Stellen und muss gleich sein:
+Die Version steht an **vier** Stellen und muss überall gleich sein:
 
 - `app/src-tauri/tauri.conf.json` → `version`
 - `app/src-tauri/Cargo.toml` → `package.version`
+- `app/package.json` → `version`
+- `sidecar/rpc.py` → `__version__` — das ist die Zahl, die die **Statusleiste
+  der App** anzeigt
+
+`tests/test_rpc.py::test_versionen_stimmen_ueberein` vergleicht alle vier und
+schlägt bei Drift fehl. Der Test entstand, weil die Statusleiste noch
+`0.1.0-alpha` zeigte, als 0.2.0 längst ausgeliefert war.
 
 ---
 
 ## Vor dem Ausliefern prüfen
 
-1. Installer auf einer Maschine **ohne** `.venv-sidecar` installieren — nur so
-   fällt auf, wenn ein Modul nur dank der Dev-venv importierbar war.
-2. App starten → Statusleiste muss `sidecar v…` plus `GPU ✓` zeigen.
+1. **Den portablen Ordner auf eine Maschine ohne `.venv-sidecar` kopieren**
+   und dort `Blitztext.exe` starten — nur so fällt auf, wenn ein Modul nur
+   dank der Dev-venv importierbar war. (Ersatzweise auf demselben Rechner:
+   Ordner an einen anderen Ort kopieren und von dort starten.)
+2. App starten → Statusleiste muss `sidecar v…` plus `GPU ✓` zeigen. Die
+   Versionsnummer dort muss die des Releases sein.
 3. Eine kurze MP3 mit **Whisper** importieren und bis zum fertigen Transkript
    durchlaufen lassen.
 4. Dieselbe Datei mit **Parakeet** importieren. Eigener Prüfpunkt, weil
    Parakeet über einen zweiten Runtime-Pfad läuft (ONNX statt CTranslate2)
    und seine Preprocessor-Gewichte als Datendateien mitkommen müssen —
    fehlt dort etwas, bricht es erst auf der Zielmaschine ab.
-5. Einen Ordner mit mehreren Dateien ziehen → Warteschlange arbeitet sie
+5. **Sprechertrennung prüfen:** Das fertige Transkript muss mehr als einen
+   Sprecher zeigen, und im Meeting darf **kein** Hinweis „Ohne
+   Sprechertrennung transkribiert" stehen. Dieser Punkt fehlte bis
+   2026-08-05 — deshalb ging ein Paket raus, in dem pyannote gar nicht lud
+   und jedes Transkript stillschweigend einen einzigen Sprecher hatte.
+   Gegenprobe im Log: `%APPDATA%\Blitztext\sidecar.log` muss
+   `preload complete (device=…)` enthalten, nicht `preload failed`.
+6. Einen Ordner mit mehreren Dateien ziehen → Warteschlange arbeitet sie
    nacheinander ab, Abbrechen funktioniert.
 
 Ohne Code-Signing zeigt Windows SmartScreen eine Warnung
@@ -113,4 +130,4 @@ Ohne Code-Signing zeigt Windows SmartScreen eine Warnung
 ## Auto-Update
 
 Nicht eingerichtet. Es gibt weder einen Update-Server noch ein Release-Repo für
-diesen Branch — Verteilung läuft manuell über den Installer.
+diesen Branch — verteilt wird der portable Ordner von Hand (NAS, USB).
