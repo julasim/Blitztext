@@ -6,7 +6,12 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // `src-tauri` muss mit ignoriert werden: dort liegen nach einem Release
+  // der gepackte Sidecar und der Rust-Build-Cache. `npm run lint` lief sonst
+  // über fremde JS-Dateien (Tauri-Codegen, matplotlib-Web-Backend) und
+  // meldete Parse-Fehler, die mit unserem Code nichts zu tun haben — die
+  // Doku führte Lint deshalb als „rot", obwohl `eslint src` grün war.
+  globalIgnores(['dist', 'src-tauri']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

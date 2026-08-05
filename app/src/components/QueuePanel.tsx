@@ -5,16 +5,9 @@
 // eingereiht, verschwindet der ganze Block — kein leerer Rahmen.
 
 import { AlertCircle, Loader2, X } from "lucide-react";
+import { STAGE_LABEL } from "../lib/format";
 import { useMeetingStore } from "../state/useMeetingStore";
 import type { Job } from "../lib/types";
-
-const STAGE_LABEL: Record<string, string> = {
-  decode: "Lese Datei",
-  transcribe: "Transkribiert",
-  diarize: "Erkennt Sprecher",
-  merge: "Ordnet zu",
-  persist: "Speichert",
-};
 
 function fileName(path: string): string {
   return path.split(/[\\/]/).pop() || path;
@@ -33,7 +26,16 @@ export function QueuePanel() {
     (j) => j.state === "done" || j.state === "failed" || j.state === "cancelled",
   );
 
-  if (running.length === 0 && queued.length === 0 && failed.length === 0) {
+  // `finished` gehört in die Bedingung: der Aufräumen-Knopf hängt daran.
+  // Ohne ihn verschwand der ganze Block, sobald nichts mehr lief — erledigte
+  // Jobs sammelten sich in der DB und ließen sich nur noch löschen, solange
+  // zufällig gerade ein anderer Import lief.
+  if (
+    running.length === 0 &&
+    queued.length === 0 &&
+    failed.length === 0 &&
+    finished.length === 0
+  ) {
     return null;
   }
 

@@ -3,20 +3,27 @@
 // into useMeetingStore.progress.
 
 import { Loader2 } from "lucide-react";
+import { STAGE_LABEL } from "../lib/format";
 import { useMeetingStore, type ProgressInfo } from "../state/useMeetingStore";
 
-const STAGE_LABEL: Record<ProgressInfo["stage"], string> = {
-  decode: "Audio lesen",
-  transcribe: "Transkribieren",
-  diarize: "Sprecher erkennen",
-  merge: "Zusammenführen",
-  persist: "Speichern",
-};
-
-function fmtEta(sec?: number | null): string {
-  if (sec == null || !isFinite(sec) || sec <= 0) return "";
-  if (sec < 60) return `noch ~${Math.round(sec)}s`;
-  return `noch ~${Math.round(sec / 60)} min`;
+/** Restzeit aus dem bisherigen Tempo schätzen.
+ *
+ * Das Backend liefert keine Restzeit. Bis 2026-08-05 zeigte diese Stelle
+ * `eta_sec` an — das war die **verstrichene** Laufzeit der gerade beendeten
+ * Stufe, also nachweislich das Gegenteil dessen, was „noch ~X s" verspricht.
+ * Jetzt: verstrichene Zeit / erreichter Anteil ⇒ Gesamtdauer ⇒ Rest.
+ */
+function fmtRestzeit(p: ProgressInfo): string {
+  // Unter 2 % ist die Hochrechnung wertlos (und zeigt Fantasiezahlen).
+  if (!p.pct || p.pct < 0.02 || p.pct >= 1) return "";
+  const verstrichen = (Date.now() - p.startedAt) / 1000;
+  if (verstrichen < 3) return "";
+  const rest = (verstrichen * (1 - p.pct)) / p.pct;
+  if (!isFinite(rest) || rest <= 0) return "";
+  // Auf 5 s bzw. volle Minuten runden — Sekundengenauigkeit täuscht eine
+  // Präzision vor, die eine Hochrechnung nicht hat.
+  if (rest < 60) return `noch ~${Math.max(5, Math.round(rest / 5) * 5)}s`;
+  return `noch ~${Math.round(rest / 60)} min`;
 }
 
 export function ProcessingBanner({ meetingId }: { meetingId: string }) {
@@ -86,7 +93,7 @@ export function ProcessingBanner({ meetingId }: { meetingId: string }) {
           textAlign: "right",
         }}
       >
-        {pct}% {fmtEta(p.eta_sec)}
+        {pct}% {fmtRestzeit(p)}
       </span>
     </div>
   );

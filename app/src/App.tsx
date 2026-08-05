@@ -37,7 +37,17 @@ export default function App() {
         const ping = await call<{ ok: boolean; version: string }>("ping");
         if (cancelled) return;
         setBoot({ status: "ok", version: ping.version });
-        unwire = await wireSidecarEvents();
+        const off = await wireSidecarEvents();
+        // Zwischen dem Start dieses Effects und hier liegen zwei await. Lief
+        // die Aufräumfunktion in der Zwischenzeit, war `unwire` dort noch
+        // null und die Listener blieben für immer hängen — unter StrictMode
+        // (Doppel-Mount im Dev-Modus) also sieben Abonnements zweimal, mit
+        // doppelt verarbeiteten Events.
+        if (cancelled) {
+          off();
+          return;
+        }
+        unwire = off;
         await Promise.all([loadConfig(), loadMeetings(), loadJobs()]);
       } catch (e) {
         if (!cancelled) {
@@ -80,6 +90,7 @@ export default function App() {
       }}
     >
       <Titlebar />
+      <ActionErrorBanner />
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <Sidebar />
       <div
@@ -105,6 +116,51 @@ export default function App() {
         {boot.status === "ok" && <StatusBar version={boot.version} />}
       </div>
       </div>
+    </div>
+  );
+}
+
+/** Meldung einer fehlgeschlagenen Aktion (Löschen, Umbenennen, Abbrechen).
+ *
+ * Diese Pfade scheiterten vorher **stumm**: der Nutzer klickte, nichts
+ * geschah, und nichts erklärte warum. Die Leiste steht bewusst oben über
+ * allen Ansichten — der Fehler kann in jeder von ihnen ausgelöst werden. */
+function ActionErrorBanner() {
+  const message = useMeetingStore((s) => s.actionError);
+  const clear = useMeetingStore((s) => s.clearActionError);
+  if (!message) return null;
+  return (
+    <div
+      role="alert"
+      style={{
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "8px 14px",
+        borderBottom: "1px solid var(--bt-red)",
+        background: "var(--bt-red-bg)",
+        color: "var(--bt-red-ink)",
+        fontSize: "var(--fs-sm)",
+      }}
+    >
+      <span style={{ flex: 1, minWidth: 0 }}>{message}</span>
+      <button
+        type="button"
+        onClick={clear}
+        aria-label="Meldung schließen"
+        style={{
+          border: "none",
+          background: "transparent",
+          color: "inherit",
+          cursor: "pointer",
+          fontSize: "var(--fs-md)",
+          lineHeight: 1,
+          padding: 2,
+        }}
+      >
+        ×
+      </button>
     </div>
   );
 }

@@ -2,21 +2,19 @@
 
 import { Download, FileText, Loader2, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { fmtDateTime, fmtDuration } from "../lib/format";
 import { call } from "../lib/rpc";
 import { useMeetingStore } from "../state/useMeetingStore";
-
-function fmtDuration(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m} min ${String(s % 60).padStart(2, "0")}s`;
-  return `${Math.floor(m / 60)} h ${m % 60} min`;
-}
 
 export function MetaPanel() {
   const active = useMeetingStore((s) => s.active);
   const cleanupRunning = useMeetingStore((s) => s.cleanupRunning);
   const cleanupError = useMeetingStore((s) => s.cleanupError);
+  const cleanupProgress = useMeetingStore((s) => s.cleanupProgress);
+  const cleanupMode = useMeetingStore((s) => s.cleanupMode);
+  const setCleanupMode = useMeetingStore((s) => s.setCleanupMode);
+  const warnings = useMeetingStore((s) => s.warnings);
+  const dismissWarning = useMeetingStore((s) => s.dismissWarning);
   const runCleanup = useMeetingStore((s) => s.runCleanup);
   const useCleanup = useMeetingStore((s) => s.useCleanup);
   const setUseCleanup = useMeetingStore((s) => s.setUseCleanup);
@@ -43,9 +41,58 @@ export function MetaPanel() {
         height: "100%",
       }}
     >
+      {warnings[active.id] && (
+        <div
+          role="status"
+          style={{
+            padding: "10px 12px",
+            borderRadius: "var(--radius-lg)",
+            border: "1px solid var(--bt-amber, var(--bt-line))",
+            background: "var(--bt-amber-bg, var(--bt-paper))",
+            fontSize: "var(--fs-sm)",
+            lineHeight: 1.5,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "start", gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <strong>Ohne Sprechertrennung transkribiert.</strong>
+              <div
+                style={{
+                  marginTop: 4,
+                  color: "var(--bt-muted)",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "var(--fs-xs)",
+                  wordBreak: "break-word",
+                }}
+              >
+                {warnings[active.id]}
+              </div>
+              <div style={{ marginTop: 6, color: "var(--bt-muted)" }}>
+                Alle Absätze stehen unter einem Sprecher, geteilt an längeren
+                Pausen. Prüfe den HF-Token in den Einstellungen.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => dismissWarning(active.id)}
+              aria-label="Hinweis schließen"
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "inherit",
+                cursor: "pointer",
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
       <Section label="Details">
-        <Row label="Datum" value={fmtDate(active.created_at)} />
-        <Row label="Dauer" value={fmtDuration(active.duration_ms)} />
+        <Row label="Datum" value={fmtDateTime(active.created_at)} />
+        <Row label="Dauer" value={fmtDuration(active.duration_ms, { sekunden: true })} />
         <Row label="Sprache" value={active.language?.toUpperCase() || "—"} />
         <Row label="Whisper" value={active.whisper_model || "—"} mono />
         <Row label="Sprecher" value={String(active.speakers.length)} />
@@ -54,7 +101,40 @@ export function MetaPanel() {
 
       <Section label="LLM-Cleanup">
         <div style={{ fontSize: "var(--fs-sm)", color: "var(--bt-muted)", lineHeight: 1.5 }}>
-          Entfernt Füllwörter und Stotter-Wiederholungen. Inhalt bleibt unverändert.
+          {cleanupMode === "faithful"
+            ? "Entfernt Füllwörter und Stotter-Wiederholungen. Inhalt bleibt unverändert."
+            : "Setzt zusätzlich Satzzeichen und führt angefangene Sätze zu Ende. Der Rohtext bleibt erhalten."}
+        </div>
+        {/* Die zweite Stufe gibt es im Sidecar seit dem 2026-07-27, sie war
+            nur nirgends wählbar. */}
+        <div style={{ marginTop: 10, display: "flex", gap: 6 }}>
+          {(
+            [
+              ["faithful", "wortgetreu"],
+              ["readable", "lesbar"],
+            ] as const
+          ).map(([wert, beschriftung]) => (
+            <button
+              key={wert}
+              type="button"
+              disabled={cleanupRunning}
+              onClick={() => setCleanupMode(wert)}
+              style={{
+                flex: 1,
+                padding: "5px 8px",
+                borderRadius: "var(--radius-lg)",
+                border: "1px solid var(--bt-line)",
+                background:
+                  cleanupMode === wert ? "var(--bt-ink)" : "transparent",
+                color:
+                  cleanupMode === wert ? "var(--bt-white)" : "var(--bt-muted)",
+                fontSize: "var(--fs-xs)",
+                opacity: cleanupRunning ? 0.5 : 1,
+              }}
+            >
+              {beschriftung}
+            </button>
+          ))}
         </div>
         <div
           style={{
@@ -86,7 +166,12 @@ export function MetaPanel() {
             {cleanupRunning ? (
               <>
                 <Loader2 size={14} className="bt-spin" />
-                Läuft…
+                {/* Ein Cleanup ist ein LLM-Aufruf je Absatz und dauert bei
+                    80 Absätzen Minuten. Ohne Zahl sieht die Oberfläche aus,
+                    als stünde sie still. */}
+                {cleanupProgress
+                  ? `${cleanupProgress.processed + cleanupProgress.skipped}/${cleanupProgress.total}`
+                  : "Läuft…"}
               </>
             ) : (
               <>
@@ -150,8 +235,9 @@ export function MetaPanel() {
                 `„${active.title}" und alle zugehörigen Daten wirklich löschen?`,
               )
             ) {
-              await deleteMeeting(active.id);
-              goLibrary();
+              // Nur wechseln, wenn es wirklich weg ist. Sonst stünde man vor
+              // einer leeren Bibliothek, während das Meeting noch existiert.
+              if (await deleteMeeting(active.id)) goLibrary();
             }
           }}
           style={{
@@ -358,16 +444,3 @@ function ExportButton({
   );
 }
 
-function fmtDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString("de-AT", {
-      year: "numeric",
-      month: "short",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}

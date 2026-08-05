@@ -12,7 +12,12 @@ import type { Job, MeetingFull, MeetingListItem } from "../lib/types";
 export type ProgressInfo = {
   stage: "decode" | "transcribe" | "diarize" | "merge" | "persist";
   pct: number; // 0..1
-  eta_sec?: number | null;
+  /** Zeitstempel des ersten Fortschritts-Events dieses Imports (ms).
+   *  Grundlage der Restzeit-Schätzung — das Backend liefert keine. */
+  startedAt: number;
+  /** Laufzeit der zuletzt **abgeschlossenen** Stufe. Ausdrücklich keine
+   *  Restzeit; genau diese Verwechslung stand vorher in der Oberfläche. */
+  stageElapsedSec?: number | null;
 };
 
 /** Kopie ohne den Schlüssel `key` — für Fortschritts-Einträge, die nach
@@ -22,6 +27,11 @@ function withoutKey<T>(map: Record<string, T>, key: string): Record<string, T> {
   const next = { ...map };
   delete next[key];
   return next;
+}
+
+/** Fehlertext aus allem, was ein `catch` liefern kann. */
+function fehlertext(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 type View =
@@ -45,6 +55,10 @@ type Config = {
   ollama_available: boolean;
   /** Wählbare ASR-Modelle — `id` geht als whisper_model durch die Queue. */
   models: ModelChoice[];
+  /** Was der Sidecar ohne ausdrückliche Wahl nimmt (ohne GPU: `medium`). */
+  whisper_default: string;
+  /** Ollama-Modell des LLM-Cleanups. */
+  cleanup_model: string;
   /** Vom Sidecar gepflegt — der Dateidialog führt keine eigene Liste. */
   audio_extensions: string[];
 };
@@ -67,7 +81,9 @@ export type State = {
   meetingsLoading: boolean;
   meetingsError: string | null;
   loadMeetings: () => Promise<void>;
-  deleteMeeting: (id: string) => Promise<void>;
+  /** `false`, wenn das Löschen fehlschlug — der Aufrufer darf dann nicht
+   *  zur Bibliothek wechseln, als wäre alles gut gegangen. */
+  deleteMeeting: (id: string) => Promise<boolean>;
 
   // Active meeting
   active: MeetingFull | null;
@@ -81,6 +97,11 @@ export type State = {
   // Cleanup
   cleanupRunning: boolean;
   cleanupError: string | null;
+  /** `faithful` entfernt nur Füllwörter, `readable` darf zusätzlich
+   *  Satzzeichen setzen und angefangene Sätze zu Ende führen. Der Rohtext
+   *  bleibt in beiden Fällen erhalten. */
+  cleanupMode: CleanupMode;
+  setCleanupMode: (mode: CleanupMode) => void;
   runCleanup: () => Promise<void>;
 
   // Derived helpers
@@ -107,9 +128,29 @@ export type State = {
   progress: Record<string, ProgressInfo>;
   importErrors: Record<string, string>;
   wireSidecarEvents: () => Promise<() => void>;
+
+  /** Fehler einer schreibenden Aktion (Löschen, Umbenennen, Zusammenführen,
+   *  Abbrechen). Vorher scheiterten diese Pfade **stumm** — der Nutzer
+   *  klickte, nichts geschah, und keine Meldung erklärte warum. */
+  actionError: string | null;
+  clearActionError: () => void;
+
+  /** Nicht-fatale Warnungen je Meeting, allen voran der Ausfall der
+   *  Sprechertrennung. Das Backend sendet dafür `meeting.warning`; ohne
+   *  Abnehmer lieferte der Import ein Transkript mit genau einem Sprecher
+   *  aus, ohne dass irgendwo stand warum. */
+  warnings: Record<string, string>;
+  dismissWarning: (meetingId: string) => void;
+
+  /** Fortschritt des LLM-Cleanups (Absätze). Ein Lauf über 80 Absätze
+   *  dauert Minuten — ohne Zahl steht die UI scheinbar still. */
+  cleanupProgress: { processed: number; skipped: number; total: number } | null;
 };
 
 export type SkippedPath = { path: string; reason: string };
+
+/** Stufen des LLM-Cleanups, siehe `core/llm.py`. */
+export type CleanupMode = "faithful" | "readable";
 
 export const useMeetingStore = create<State>((set, get) => ({
   view: { name: "library" },
@@ -148,12 +189,18 @@ export const useMeetingStore = create<State>((set, get) => ({
     }
   },
   async deleteMeeting(id) {
-    await call("meeting.delete", { id });
-    // Optimistic local update, then reload.
+    try {
+      await call("meeting.delete", { id });
+    } catch (e) {
+      set({ actionError: `Löschen fehlgeschlagen: ${fehlertext(e)}` });
+      return false;
+    }
     set((s) => ({
       meetings: s.meetings.filter((m) => m.id !== id),
       active: s.active?.id === id ? null : s.active,
+      actionError: null,
     }));
+    return true;
   },
 
   active: null,
@@ -190,39 +237,65 @@ export const useMeetingStore = create<State>((set, get) => ({
         name,
       });
     } catch (e) {
-      // Revert + surface
-      set({ activeError: e instanceof Error ? e.message : String(e) });
-      void get().loadMeeting(active.id);
+      // Zurücksetzen und melden. Die Meldung geht bewusst nach `actionError`
+      // und nicht nach `activeError`: das folgende loadMeeting() setzt
+      // `activeError` auf null und hätte sie sofort wieder gelöscht, bevor
+      // sie jemand lesen kann.
+      set({ actionError: `Umbenennen fehlgeschlagen: ${fehlertext(e)}` });
+      await get().loadMeeting(active.id);
     }
   },
   async mergeSpeakers(sourceId, targetId) {
     const active = get().active;
     if (!active) return;
-    await call("speaker.merge", {
-      meeting_id: active.id,
-      source_id: sourceId,
-      target_id: targetId,
-    });
-    void get().loadMeeting(active.id);
+    try {
+      await call("speaker.merge", {
+        meeting_id: active.id,
+        source_id: sourceId,
+        target_id: targetId,
+      });
+      set({ actionError: null });
+    } catch (e) {
+      set({ actionError: `Zusammenführen fehlgeschlagen: ${fehlertext(e)}` });
+    }
+    await get().loadMeeting(active.id);
   },
   async setTitle(title) {
     const active = get().active;
     if (!active) return;
+    const vorher = active.title;
     set({ active: { ...active, title } });
-    await call("meeting.set_title", { id: active.id, title });
-    void get().loadMeetings();
+    try {
+      await call("meeting.set_title", { id: active.id, title });
+    } catch (e) {
+      // Ohne Rücknahme stünden hier drei verschiedene Titel: der neue in der
+      // Überschrift, der alte in der Seitenleiste, der alte in der DB.
+      set((s) => ({
+        active: s.active ? { ...s.active, title: vorher } : s.active,
+        actionError: `Titel konnte nicht gespeichert werden: ${fehlertext(e)}`,
+      }));
+      return;
+    }
+    set({ actionError: null });
+    await get().loadMeetings();
   },
 
   cleanupRunning: false,
   cleanupError: null,
+  cleanupMode: "faithful",
+  setCleanupMode: (mode) => set({ cleanupMode: mode }),
   async runCleanup() {
     // Async pattern: kick the sidecar off, the cleanup.* events take over
     // from there. cleanupRunning stays true until the .done event fires.
     const active = get().active;
     if (!active) return;
-    set({ cleanupRunning: true, cleanupError: null });
+    if (get().cleanupRunning) return; // kein zweiter Lauf auf denselben Daten
+    set({ cleanupRunning: true, cleanupError: null, cleanupProgress: null });
     try {
-      await call("cleanup.run", { meeting_id: active.id });
+      await call("cleanup.run", {
+        meeting_id: active.id,
+        mode: get().cleanupMode,
+      });
       // Don't refresh here — wait for cleanup.done.
     } catch (e) {
       set({
@@ -254,11 +327,21 @@ export const useMeetingStore = create<State>((set, get) => ({
     return res;
   },
   async cancelJob(jobId) {
-    await call("queue.cancel", { job_id: jobId });
+    try {
+      await call("queue.cancel", { job_id: jobId });
+      set({ actionError: null });
+    } catch (e) {
+      set({ actionError: `Abbrechen fehlgeschlagen: ${fehlertext(e)}` });
+    }
     await Promise.all([get().loadJobs(), get().loadMeetings()]);
   },
   async clearFinishedJobs() {
-    await call("queue.clear_finished");
+    try {
+      await call("queue.clear_finished");
+      set({ actionError: null });
+    } catch (e) {
+      set({ actionError: `Aufräumen fehlgeschlagen: ${fehlertext(e)}` });
+    }
     await get().loadJobs();
   },
 
@@ -269,25 +352,42 @@ export const useMeetingStore = create<State>((set, get) => ({
       meeting_id: string;
       stage: ProgressInfo["stage"];
       pct: number;
-      eta_sec?: number;
+      stage_elapsed_sec?: number;
     }>("meeting.progress", (p) => {
-      set((s) => ({
-        progress: {
-          ...s.progress,
-          [p.meeting_id]: { stage: p.stage, pct: p.pct, eta_sec: p.eta_sec },
-        },
-      }));
+      set((s) => {
+        const bisher = s.progress[p.meeting_id];
+        return {
+          progress: {
+            ...s.progress,
+            [p.meeting_id]: {
+              stage: p.stage,
+              pct: p.pct,
+              // Startzeit über die Events hinweg festhalten — sie ist der
+              // Bezugspunkt für die Restzeit-Schätzung.
+              startedAt: bisher?.startedAt ?? Date.now(),
+              stageElapsedSec: p.stage_elapsed_sec,
+            },
+          },
+          // Läuft wieder etwas, ist der Fehler des Vorlaufs erledigt. Ohne
+          // das verdeckte er dauerhaft den Fortschrittsbalken — die Anzeige
+          // prüft den Fehler zuerst.
+          importErrors: withoutKey(s.importErrors, p.meeting_id),
+        };
+      });
     });
     const offDone = await onEvent<{ meeting_id: string }>(
       "meeting.done",
       (p) => {
         // Drop the progress entry + refresh the meeting + the library list.
         set((s) => ({ progress: withoutKey(s.progress, p.meeting_id) }));
-        void get().loadMeetings();
+        void (async () => {
+          await get().loadMeetings();
+          const meta = get().meetings.find((m) => m.id === p.meeting_id);
+          // Windows toast — best-effort, ask permission lazily.
+          if (meta) void notifyMeetingDone(meta);
+        })();
         const active = get().active;
         if (active?.id === p.meeting_id) void get().loadMeeting(p.meeting_id);
-        // Windows toast — best-effort, ask permission lazily.
-        void notifyMeetingDone(p.meeting_id);
       },
     );
     const offError = await onEvent<{ meeting_id: string; message: string }>(
@@ -300,24 +400,68 @@ export const useMeetingStore = create<State>((set, get) => ({
         void get().loadMeetings();
       },
     );
+    // Sprechertrennung ausgefallen (Token, Lizenz, CUDA): der Import läuft
+    // mit EINEM Sprecher weiter. Ohne diesen Abnehmer sah das Ergebnis aus
+    // wie ein normales Transkript, und niemand erfuhr den Grund.
+    const offWarning = await onEvent<{
+      meeting_id: string;
+      stage: string;
+      message: string;
+    }>("meeting.warning", (p) => {
+      set((s) => ({
+        warnings: { ...s.warnings, [p.meeting_id]: p.message },
+      }));
+    });
+    const offCleanupProgress = await onEvent<{
+      meeting_id: string;
+      processed: number;
+      skipped: number;
+      total: number;
+    }>("cleanup.progress", (p) => {
+      set({
+        cleanupProgress: {
+          processed: p.processed,
+          skipped: p.skipped,
+          total: p.total,
+        },
+      });
+    });
     const offCleanupDone = await onEvent<{
       meeting_id: string;
       processed: number;
       skipped: number;
       total: number;
     }>("cleanup.done", (p) => {
-      set({ cleanupRunning: false, useCleanup: true });
+      // cleanupError mit zurücksetzen: sonst bleibt die Meldung eines
+      // einzelnen misslungenen Absatzes für immer stehen — auch über
+      // spätere, fehlerfreie Läufe und andere Meetings hinweg.
+      set({
+        cleanupRunning: false,
+        cleanupError: null,
+        cleanupProgress: null,
+        useCleanup: true,
+      });
       const active = get().active;
       if (active?.id === p.meeting_id) void get().loadMeeting(p.meeting_id);
     });
     const offCleanupError = await onEvent<{
       meeting_id: string;
       message: string;
+      fatal?: boolean;
     }>("cleanup.error", (p) => {
+      // Das Backend meldet diesen Fehler AUCH je misslungenem Absatz und
+      // arbeitet danach weiter. Nur beim fatalen Fall darf die Anzeige
+      // enden — sonst wird der Knopf wieder aktiv, während der Worker noch
+      // läuft, und ein zweiter Klick startet einen Parallellauf.
       set({
-        cleanupRunning: false,
         cleanupError: p.message,
+        ...(p.fatal ? { cleanupRunning: false, cleanupProgress: null } : {}),
       });
+    });
+    // Nach einem Absturz wieder eingereihte oder endgültig aufgegebene Jobs.
+    const offRecovered = await onEvent("queue.recovered", () => {
+      void get().loadJobs();
+      void get().loadMeetings();
     });
     // Warteschlange: jede Änderung im Sidecar → Liste neu holen. Das ist
     // ein RPC pro Zustandswechsel und damit billig; lokales Mitzählen
@@ -338,22 +482,39 @@ export const useMeetingStore = create<State>((set, get) => ({
       offProgress();
       offDone();
       offError();
+      offWarning();
+      offCleanupProgress();
       offCleanupDone();
       offCleanupError();
       offQueueChanged();
+      offRecovered();
       for (const off of offQueueFinished) off();
     };
   },
+
+  actionError: null,
+  clearActionError: () => set({ actionError: null }),
+
+  warnings: {},
+  dismissWarning: (meetingId) =>
+    set((s) => ({ warnings: withoutKey(s.warnings, meetingId) })),
+
+  cleanupProgress: null,
 }));
 
 // --- Helpers --------------------------------------------------------------
 
-async function notifyMeetingDone(meetingId: string): Promise<void> {
+/** Windows-Toast nach einem fertigen Import.
+ *
+ * Nimmt die Metadaten aus der bereits geladenen Liste. Vorher holte diese
+ * Funktion das **vollständige** Meeting über `meeting.get` — mit allen Turns
+ * und sämtlichen Wort-Zeitstempeln, also mehrere MB in einer einzigen Zeile
+ * über die stdio-Pipe, nur um Titel und Dauer zu lesen. */
+async function notifyMeetingDone(meta: {
+  title: string;
+  duration_ms: number;
+}): Promise<void> {
   try {
-    const meta = await call<{ title: string; duration_ms: number }>(
-      "meeting.get",
-      { id: meetingId },
-    );
     const mins = Math.round((meta.duration_ms || 0) / 60000);
     const {
       isPermissionGranted,

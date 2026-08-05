@@ -10,12 +10,19 @@
 
 import { FileAudio, Upload, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useMeetingStore, type SkippedPath } from "../state/useMeetingStore";
+import {
+  useMeetingStore,
+  type ModelChoice,
+  type SkippedPath,
+} from "../state/useMeetingStore";
 
 const FALLBACK_EXTENSIONS = [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".mp4"];
 
 /** "" = Automatik (Sidecar wählt: large-v3 mit GPU, sonst medium). */
 const MODEL_AUTO = "";
+
+/** Muss zu `core/parakeet.MODEL_ID` passen — kommt über `config.models`. */
+const PARAKEET_ID = "parakeet-tdt-0.6b-v3";
 
 export function MeetingImport() {
   const goLibrary = useMeetingStore((s) => s.goLibrary);
@@ -26,17 +33,33 @@ export function MeetingImport() {
   const [paths, setPaths] = useState<string[]>([]);
   const [model, setModel] = useState<string>(MODEL_AUTO);
   const [vocabulary, setVocabulary] = useState("");
-  const [state, setState] = useState<"idle" | "submitting" | "error">("idle");
+  // Nur zwei Zustände: der frühere Wert "error" wurde gesetzt, aber
+  // nirgends gelesen — angezeigt wird der Fehler über `error`.
+  const [state, setState] = useState<"idle" | "submitting">("idle");
   const [error, setError] = useState<string | null>(null);
   const [skipped, setSkipped] = useState<SkippedPath[]>([]);
+  /** Begriffe, die der Sidecar an der Token-Grenze aus dem Vokabular
+   *  geworfen hat. Das Backend meldet sie ausdrücklich zurück — „ein still
+   *  gekürztes Vokabular ist ein Fehler, den niemand bemerkt". */
+  const [dropped, setDropped] = useState<string[]>([]);
 
   const extensions = useMemo(
     () => config?.audio_extensions ?? FALLBACK_EXTENSIONS,
     [config],
   );
 
+  /** Parakeets TDT-Decoder kennt kein Vokabular-Priming. Eine Stelle für
+   *  Anzeige **und** Absenden — vorher war das Feld zwar ausgegraut, der
+   *  Wert ging aber trotzdem mit. */
+  const vokabularAus = model === PARAKEET_ID;
+
   const addPaths = (incoming: string[]) => {
     setSkipped([]);
+    setDropped([]);
+    // Auch die Fehlermeldung: sie bezog sich auf den vorigen Versuch und
+    // blieb sonst über der frischen Auswahl stehen.
+    setError(null);
+    setState("idle");
     setPaths((current) => {
       const merged = new Set(current);
       for (const p of incoming) merged.add(p);
@@ -104,20 +127,33 @@ export function MeetingImport() {
     try {
       const res = await enqueue(paths, {
         ...(model === MODEL_AUTO ? {} : { whisper_model: model }),
-        ...(vocabulary.trim() ? { vocabulary: vocabulary.trim() } : {}),
+        // Bei Parakeet ist das Feld deaktiviert — dann darf der Wert auch
+        // nicht mitgehen. Sonst meldet der Sidecar womöglich gekürzte
+        // Begriffe zurück für ein Vokabular, das ohnehin nie gewirkt hätte.
+        ...(vocabulary.trim() && !vokabularAus
+          ? { vocabulary: vocabulary.trim() }
+          : {}),
       });
       if (res.count === 0) {
-        setState("error");
+        setState("idle");
         setSkipped(res.skipped);
         setError("Nichts eingereiht — keine verwertbare Audiodatei dabei.");
         return;
       }
       setSkipped(res.skipped);
+      setDropped(res.vocabulary_dropped ?? []);
       setPaths([]);
       setState("idle");
-      goLibrary();
+      // Nur weiterspringen, wenn es nichts zu berichten gibt. Vorher stand
+      // hier immer `goLibrary()` — die Ansicht wurde abgebaut, bevor die
+      // Liste der übersprungenen Dateien je gerendert war. Wer 50 Dateien
+      // einwarf, von denen 10 nicht unterstützt sind, erfuhr davon nichts
+      // und vermisste sie später kommentarlos.
+      if (res.skipped.length === 0 && (res.vocabulary_dropped ?? []).length === 0) {
+        goLibrary();
+      }
     } catch (e) {
-      setState("error");
+      setState("idle");
       setError(e instanceof Error ? e.message : String(e));
     }
   };
@@ -181,8 +217,7 @@ export function MeetingImport() {
           <VocabularyField
             value={vocabulary}
             onChange={setVocabulary}
-            // Parakeets TDT-Decoder kennt kein Vokabular-Priming.
-            disabled={model === "parakeet-tdt-0.6b-v3"}
+            disabled={vokabularAus}
           />
         )}
 
@@ -205,6 +240,48 @@ export function MeetingImport() {
         )}
 
         {skipped.length > 0 && <SkippedList skipped={skipped} />}
+
+        {dropped.length > 0 && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: "10px 12px",
+              borderRadius: "var(--radius-lg)",
+              border: "1px solid var(--bt-line)",
+              background: "var(--bt-paper)",
+              fontSize: "var(--fs-sm)",
+              lineHeight: 1.5,
+            }}
+          >
+            <strong>Vokabular gekürzt.</strong> Whisper nimmt nur eine
+            begrenzte Anzahl Begriffe entgegen. Nicht übernommen wurden:{" "}
+            <span style={{ fontFamily: "var(--font-mono)" }}>
+              {dropped.join(", ")}
+            </span>
+          </div>
+        )}
+
+        {(skipped.length > 0 || dropped.length > 0) && paths.length === 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              setSkipped([]);
+              setDropped([]);
+              goLibrary();
+            }}
+            style={{
+              marginTop: 14,
+              padding: "8px 14px",
+              borderRadius: "var(--radius-lg)",
+              background: "var(--bt-ink)",
+              color: "var(--bt-white)",
+              fontSize: "var(--fs-sm)",
+              fontWeight: 500,
+            }}
+          >
+            Weiter zur Bibliothek
+          </button>
+        )}
 
         <div
           style={{
@@ -325,7 +402,7 @@ function ModelPicker({
   value,
   onChange,
 }: {
-  models: { id: string; label: string; hint: string }[];
+  models: ModelChoice[];
   value: string;
   onChange: (v: string) => void;
 }) {

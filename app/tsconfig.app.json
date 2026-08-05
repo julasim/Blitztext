@@ -16,6 +16,10 @@
     "jsx": "react-jsx",
 
     /* Linting */
+    // `strict` fehlte — der Bestand besteht die Prüfung aber ohne einen
+    // einzigen Befund. Einschalten kostet also nichts und schließt die Lücke
+    // für alles, was künftig dazukommt (allen voran implizites `any`).
+    "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,

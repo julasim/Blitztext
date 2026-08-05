@@ -5,6 +5,7 @@
 
 import { FileAudio, Plus, Settings as SettingsIcon, Zap } from "lucide-react";
 import { QueuePanel } from "./QueuePanel";
+import { fmtDateShort, fmtDuration } from "../lib/format";
 import { useMeetingStore } from "../state/useMeetingStore";
 import type { MeetingListItem } from "../lib/types";
 
@@ -23,25 +24,6 @@ function dotColor(id: string): string {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
   return dotColors[h % dotColors.length];
-}
-
-function fmtDuration(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m} min`;
-  return `${Math.floor(m / 60)} h ${m % 60} min`;
-}
-
-function fmtDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("de-AT", {
-      day: "2-digit",
-      month: "short",
-    });
-  } catch {
-    return "";
-  }
 }
 
 export function Sidebar() {
@@ -273,7 +255,7 @@ function MeetingRow({
           color: "var(--bt-subtle)",
           flexShrink: 0,
         }}
-        title={fmtDate(m.created_at)}
+        title={fmtDateShort(m.created_at)}
       >
         {fmtDuration(m.duration_ms)}
       </span>

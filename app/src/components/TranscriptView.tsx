@@ -78,15 +78,41 @@ export function TranscriptView() {
 
 function TranscriptHeader({ title }: { title: string }) {
   const setTitle = useMeetingStore((s) => s.setTitle);
+
+  /** Übernehmen oder verwerfen — in beiden Fällen muss der angezeigte Text
+   *  wieder zum Zustand passen. Vorher wurde ein leerer Titel still
+   *  verworfen, die leere Überschrift blieb aber bis zum nächsten Rerender
+   *  im DOM stehen. */
+  const uebernehmen = (element: HTMLElement) => {
+    const neu = (element.textContent || "").trim();
+    if (!neu) {
+      element.textContent = title; // leerer Titel ist keine Eingabe
+      return;
+    }
+    if (neu !== title) void setTitle(neu);
+  };
+
   return (
     <div style={{ marginBottom: 20 }}>
       <h1
         style={{ fontSize: "var(--fs-xl)", fontWeight: 600 }}
         contentEditable
         suppressContentEditableWarning
-        onBlur={(e) => {
-          const v = (e.currentTarget.textContent || "").trim();
-          if (v && v !== title) void setTitle(v);
+        role="textbox"
+        aria-label="Titel bearbeiten"
+        title="Zum Umbenennen klicken"
+        onBlur={(e) => uebernehmen(e.currentTarget)}
+        onKeyDown={(e) => {
+          // Ohne diese beiden Tasten fügt Enter in einem contentEditable
+          // einen Zeilenumbruch ein, und Escape tut gar nichts.
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.currentTarget.blur();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            e.currentTarget.textContent = title;
+            e.currentTarget.blur();
+          }
         }}
       >
         {title}

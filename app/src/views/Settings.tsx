@@ -9,12 +9,15 @@ import { useEffect, useState } from "react";
 import { call } from "../lib/rpc";
 import { useMeetingStore } from "../state/useMeetingStore";
 
-/** Nur die Felder, die diese Ansicht wirklich liest — `settings.get`
- *  liefert mehr (whisper_default, ollama_default), das zeigen wir aus
- *  `config.models` bzw. brauchen es nicht. */
+/** Was `settings.get` liefert. Die Modell-Vorgaben stehen bewusst NICHT
+ *  hier, sondern in `config.get` (`whisper_default`, `cleanup_model`) —
+ *  `settings.*` ist für das da, was der Nutzer selbst setzt. */
 type SettingsSnapshot = {
   hf_token_present: boolean;
   hf_token_hint: string;
+  /** Leer, solange die Anmeldeinformationsverwaltung antwortet. Sonst der
+   *  Fehler — „kein Token" wäre in dem Fall eine falsche Auskunft. */
+  credential_store_error?: string;
 };
 
 type TokenStatus = {
@@ -106,12 +109,19 @@ export function Settings() {
         </Card>
 
         <Card title="Modelle">
+          {/* Beide Werte kommen aus dem Sidecar. Vorher stand hier der erste
+              Eintrag der Modellliste bzw. eine fest verdrahtete Zeichenkette —
+              ohne GPU zeigte die Seite large-v3 an, während medium lief. */}
           <TextRow
             label="Whisper-Default"
-            value={cfg?.models?.[0]?.id ?? "large-v3"}
+            value={cfg?.whisper_default || "—"}
             mono
           />
-          <TextRow label="Ollama Cleanup" value="qwen2.5:7b-instruct" mono />
+          <TextRow
+            label="Ollama Cleanup"
+            value={cfg?.cleanup_model || "—"}
+            mono
+          />
           <p
             style={{
               fontSize: "var(--fs-xs)",
@@ -363,7 +373,14 @@ function HfTokenEditor() {
           }}
         >
           <span style={{ flex: 1, color: "var(--bt-ink-soft)" }}>
-            {snap.hf_token_present ? snap.hf_token_hint : "kein Token gespeichert"}
+            {/* Ist die Anmeldeinformationsverwaltung gestört, sagte die
+                Anzeige „kein Token gespeichert" — der Nutzer hätte ihn ein
+                zweites Mal eingetragen, ohne dass es geholfen hätte. */}
+            {snap.credential_store_error
+              ? "Windows-Anmeldeinformationsverwaltung nicht lesbar"
+              : snap.hf_token_present
+                ? snap.hf_token_hint
+                : "kein Token gespeichert"}
           </span>
           <button
             type="button"

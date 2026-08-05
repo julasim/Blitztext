@@ -5,6 +5,10 @@
 
 import { Users } from "lucide-react";
 import { useState } from "react";
+import { fmtDuration } from "../lib/format";
+
+/** Redezeit je Sprecher — mit Sekundenanteil. */
+const fmtDurationSek = (ms: number) => fmtDuration(ms, { sekunden: true });
 import { useMeetingStore } from "../state/useMeetingStore";
 import type { Speaker } from "../lib/types";
 
@@ -178,17 +182,10 @@ function SpeakerRow({
       >
         <span>{sp.word_count} Wörter</span>
         <span>•</span>
-        <span>{fmtDuration(sp.duration_ms)}</span>
+        <span>{fmtDurationSek(sp.duration_ms)}</span>
       </div>
     </button>
   );
-}
-
-function fmtDuration(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  return `${m} min ${String(s % 60).padStart(2, "0")}s`;
 }
 
 function RenameModal({
