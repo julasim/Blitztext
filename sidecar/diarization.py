@@ -121,9 +121,18 @@ class DiarizationPipeline:
         try:
             from pyannote.audio import Pipeline  # type: ignore
         except ImportError as e:
+            # Den ECHTEN Fehler mitgeben. Im gebündelten Sidecar ist pyannote
+            # sehr wohl vorhanden, der Import scheitert dort aber an einem
+            # Untermodul, das PyInstaller nicht erwischt hat. Eine Meldung,
+            # die pauschal „ist nicht installiert" behauptet, schickt die
+            # Fehlersuche dann in die völlig falsche Richtung — genau das ist
+            # beim 0.2.0-Paket passiert.
+            fehlend = getattr(e, "name", None)
+            hinweis = f", fehlendes Modul: {fehlend}" if fehlend else ""
             raise RuntimeError(
-                "pyannote.audio ist nicht installiert "
-                "(siehe sidecar/requirements.txt)."
+                f"pyannote.audio konnte nicht geladen werden — "
+                f"{type(e).__name__}: {e}{hinweis} "
+                f"(siehe sidecar/requirements.txt)"
             ) from e
 
         # 3.3.x-Workaround: dortige huggingface_hub-Stände kennen das

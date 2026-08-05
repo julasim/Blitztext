@@ -132,7 +132,14 @@ a = Analysis(
         "IPython",
         "jupyter",
         "notebook",
-        "pandas",  # wir nutzen es nicht; pyannote zieht es aber mit
+        # ACHTUNG: `pandas` darf hier NICHT stehen. Es sah nach totem Gewicht
+        # aus („wir nutzen es nicht"), aber `pyannote.database.util` importiert
+        # es auf Modulebene — und diese Datei liegt in der Importkette von
+        # `pyannote.audio`. Mit dem Ausschluss ließ sich pyannote im gepackten
+        # Sidecar nicht laden: die Sprechertrennung fiel still aus, jedes
+        # Transkript hatte genau einen Sprecher, und die Meldung im Log
+        # behauptete „pyannote.audio ist nicht installiert". Genau so ist die
+        # 0.2.0 ausgeliefert worden.
     ],
     noarchive=False,
 )
