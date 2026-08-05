@@ -1,5 +1,28 @@
 # Blitztext → Meeting-Transkriptions-Modus
 
+> ## ⚠ HISTORISCHES DOKUMENT — Stand April 2026
+>
+> **Nicht als Aufgabenliste lesen.** Der Plan beschreibt den Umbau von der
+> PyQt-Tray-Utility zur Desktop-App, wie er damals gedacht war. Vieles davon
+> ist überholt:
+>
+> - **Der Dictate-Modus existiert nicht mehr** (gelöscht 2026-07-23). Alles
+>   zu Hotkey, Mikrofon, Live-Aufnahme und Mini-Widget ist gegenstandslos —
+>   ebenso „Phase 2" komplett.
+> - **Genannte Dateien sind weg:** `main.py`, `ui/`, `config/`,
+>   `core/audio.py`, `core/hotkey.py`, `core/injector.py`, `core/clipboard.py`,
+>   `core/tts.py`, `installer/`. Auch `librosa` ist keine Dependency mehr.
+> - **Der Stack ist ein anderer:** torch 2.8/cu128, pyannote 4 mit
+>   `community-1`, dazu Parakeet als zweite ASR-Engine.
+> - **Nicht vorgesehen und trotzdem gebaut:** Warteschlange, Fachvokabular,
+>   zweistufiger Cleanup, Messaufbau.
+>
+> **Wofür er weiter taugt:** die Architektur-Begründungen. Warum Tauri statt
+> PyQt, warum JSON-RPC über stdio statt eines Ports, warum der Merger so
+> schneidet — das steht hier ausführlicher als irgendwo sonst.
+>
+> Aktueller Stand: `CLAUDE.md`. Aktuelle Bedienung: `README.md`.
+
 ## Context
 
 Blitztext ist heute eine Windows-Tray-Utility (PyQt6) für lokales Speech-to-Text mit globalem Hotkey: Mikrofon aufnehmen → faster-whisper → Text in aktives Fenster injizieren. Funktioniert und ist in Verwendung. GitHub: `julasim/Blitztext`.

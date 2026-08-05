@@ -8,14 +8,15 @@ pflegen. Stufe 1 reicht meist; Stufe 2 nur lesen, wenn die Aufgabe es verlangt.
 
 # Blitztext
 
-Zuletzt aktualisiert: 2026-07-23
+Zuletzt aktualisiert: 2026-08-05 · Version 0.2.0
 
 ## Worum geht's
 
 **Transkribiert Audiodateien lokal** (MP3, WAV, M4A, FLAC, OGG) auf Windows:
-Import → Whisper → Sprecher-Trennung → Review → LLM-Cleanup → Export.
-Eigenes Produkt von Julius (GitHub `julasim/Blitztext`, Arbeitsbranch
-`feat/meeting-mode`). Alles on-device.
+Import → Whisper oder Parakeet → Sprecher-Trennung → Review → LLM-Cleanup →
+Export. Dateien und ganze Ordner laufen als Warteschlange durch, seriell und
+abbrechbar. Eigenes Produkt von Julius (GitHub `julasim/Blitztext`,
+Arbeitsbranch `feat/meeting-mode`). Alles on-device.
 
 **Fokus seit 2026-07-23: nur noch Dateien.** Diktat per Hotkey und
 Live-Mitschnitt sind entfernt — die App fasst kein Mikrofon mehr an. Was
@@ -60,7 +61,10 @@ das ist keine Implementierungsdetail-Entscheidung.
 - Shell ist Tauri 2 + React + TS (`app/`), der Python-Kern läuft als Sidecar
   (JSON-RPC 2.0 über ndjson/stdio, keine offenen Ports, SQLite gehört dem
   Sidecar). Begründung: High-Fidelity-Design braucht Web-Stack.
-- **Installer: MSI/WiX** (entschieden 2026-07-23, `tauri.conf.json`).
+- **Auslieferung: portabler Ordner**, kein Installer (entschieden
+  2026-08-05). MSI scheitert hart an der Größe — das CAB-Format hinter MSI
+  kann keine 2 GB pro Paket, der Sidecar ist 4,7 GB. `make-portable.ps1`
+  stellt das Paket zusammen, verteilt wird über den NAS.
 
 **Zwei Rückbauten am 2026-07-23** — beides bleibt über die Git-Historie
 erreichbar (`git checkout <commit> -- <pfad>`):
@@ -95,16 +99,7 @@ plus CUDA-Verifikation.
 
 ## Offene Punkte / nächste Schritte
 
-- **Vor dem nächsten Release-Build: Sidecar neu bauen.** `app/src-tauri/binaries/sidecar/`
-  enthält aktuell nur `PLATZHALTER.txt` (der echte 4,8-GB-Build wurde beim Aufräumen
-  gelöscht, war nie im Git). Die Datei muss dort liegen, sonst bricht schon
-  `cargo check` mit „glob pattern binaries/sidecar/**/* … didn't match any files"
-  ab — `tauri.conf.json` deklariert das als `resources`. **Für die Entwicklung
-  genügt der Platzhalter**, weil `sidecar.rs` auf `cfg!(debug_assertions)` verzweigt
-  und im Dev-Modus `python -m sidecar` aus `.venv-sidecar` startet.
-  Echter Build: `.venv-sidecar\Scripts\python.exe -m PyInstaller build-sidecar.spec`,
-  dann `dist\blitztext-sidecar\` → `app\src-tauri\binaries\sidecar\`.
-- **Phase-1-Rest:** `speaker.sample` fehlt. Der Plan (Schritt 1 + 4.9) sieht beim
+- **`speaker.sample` fehlt.** Der Plan (Schritt 1 + 4.9) sieht beim
   Sprecher-Umbenennen ein **5-Sekunden-Audio-Snippet** vor, damit man hört, wen man
   gerade benennt. Rename und Merge sind in `SpeakerList.tsx` fertig, das Snippet
   nicht — es gibt weder die RPC-Methode in `sidecar/methods.py` noch ein
@@ -177,14 +172,20 @@ Tests tragen `@pytest.mark.slow` / `.ollama` und werden ohne die Flags
 Meeting-DB wird nie angefasst. Für Rust und TypeScript gibt es **keine**
 Tests.
 
-**Release-Build:** Sidecar zuerst (`.venv-sidecar\Scripts\python.exe -m PyInstaller
-build-sidecar.spec` → `dist\blitztext-sidecar\` nach `app\src-tauri\binaries\sidecar\`),
-dann `cd app; npx tauri build` → MSI. Schritt für Schritt in `BUILD.md`.
+**Release** — drei Schritte, Details in `BUILD.md`:
+
+```powershell
+.\.venv-sidecar\Scripts\python.exe -m PyInstaller build-sidecar.spec --noconfirm
+Copy-Item -Recurse -Force dist\blitztext-sidecar\* app\src-tauri\binaries\sidecar\
+cd app; npx tauri build --no-bundle; cd ..
+.\make-portable.ps1        # → release\Blitztext-<version>-portable\
+```
 
 **Eine Datei von der Kommandozeile transkribieren** (ohne GUI, volle Pipeline):
 
 ```powershell
-.\.venv-sidecar\Scripts\python.exe transcribe.py "C:\pfad\meeting.mp3" --cleanup
+.\.venv-sidecar\Scripts\python.exe transcribe.py "C:\pfad\meeting.mp3" `
+  --vocabulary "ÖNORM, Bewehrung" --cleanup --cleanup-mode readable
 ```
 
 **Qualität messen** (`benchmark/`, Details in `benchmark/README.md`):
@@ -285,7 +286,11 @@ Opt-in-Flags), `test_merger.py`, `test_store.py`, `test_migrations.py`,
   sind gitignored — dort liegen echte Bauberatungen.
 - `transcribe.py` — CLI: eine Audiodatei durch die volle Pipeline → Markdown,
   mit `--vocabulary`, `--cleanup` und `--cleanup-mode`.
-- `BUILD.md` — Release (PyInstaller-Sidecar + Tauri-MSI); `build-sidecar.spec`.
+- `BUILD.md` — Release Schritt für Schritt; `build-sidecar.spec` (PyInstaller,
+  filtert 2,7 GB Nicht-Laufzeit-Ballast aus torch), `make-portable.ps1`
+  (stellt das verteilbare Paket zusammen; **muss UTF-8 mit BOM bleiben**,
+  sonst liest PowerShell 5.1 es als ANSI und stolpert über den ersten
+  Gedankenstrich).
 - `PLAN.md` — **historisch**, Stand April 2026: nennt gelöschte Dateien
   (`main.py`, `core/audio.py`, `librosa`) und die hinfällige Phase 2. Für die
   Architektur-Begründungen weiter nützlich, nicht als Aufgabenliste lesen.
@@ -370,6 +375,25 @@ Opt-in-Flags), `test_merger.py`, `test_store.py`, `test_migrations.py`,
 ---
 
 ## Änderungslog
+
+- 2026-08-05 — **Version 0.2.0 gebaut und als portabler Ordner
+  ausgeliefert** (`release\Blitztext-0.2.0-portable\`, 4,72 GB).
+  **MSI ist strukturell gescheitert**, nicht an einer Einstellung: das
+  CAB-Format hinter MSI kann keine 2 GB pro Paket, `light.exe` bricht ab.
+  Entscheidung: portabler Ordner, über den NAS verteilbar, keine
+  Registry-Spuren. `tauri.conf.json` behält `nsis` als Ziel für den Tag,
+  an dem der Sidecar klein genug ist.
+  **2,7 GB Ballast gefunden:** `collect_all("torch")` nimmt auch die Teile
+  mit, die nur zum *Kompilieren gegen* torch gebraucht werden — statische
+  Bibliotheken (`dnnl.lib` allein 2,2 GB), C++-Header, Typ-Stubs. Die Spec
+  filtert sie jetzt heraus: 9532 Dateien, 7,4 → 4,71 GB, ohne Funktionsverlust.
+  **Am gepackten Sidecar verifiziert**, nicht am Import: beide ASR-Modelle
+  transkribieren wirklich (Parakeet 36 s inkl. Laden, Whisper 2 s) — damit
+  ist der `onnx_asr`-Fix belegt. Die portable EXE startet, findet ihren
+  Sidecar über `resource_dir()` und fährt die Pipeline hoch; im Log dabei
+  der Wiederanlauf im echten Betrieb.
+  Dabei ein eigener Fehler: der Test lief ohne isoliertes `APPDATA` und
+  schrieb drei Läufe in die produktive Meeting-DB — entfernt.
 
 - 2026-07-27 — **Aufräumrunde mit drei Prüf-Agenten** (Python, Frontend/Rust,
   Ordner/Dependencies). Sie haben **drei echte Fehler** gefunden, die keine
