@@ -114,7 +114,14 @@ export type State = {
   loadJobs: () => Promise<void>;
   enqueue: (
     paths: string[],
-    options?: { whisper_model?: string; language?: string; vocabulary?: string },
+    options?: {
+      whisper_model?: string;
+      language?: string;
+      vocabulary?: string;
+      /** Bekannte Teilnehmerzahl — ohne Vorgabe schätzt pyannote selbst. */
+      min_speakers?: number;
+      max_speakers?: number;
+    },
   ) => Promise<{
     count: number;
     skipped: SkippedPath[];
@@ -145,6 +152,19 @@ export type State = {
   /** Fortschritt des LLM-Cleanups (Absätze). Ein Lauf über 80 Absätze
    *  dauert Minuten — ohne Zahl steht die UI scheinbar still. */
   cleanupProgress: { processed: number; skipped: number; total: number } | null;
+
+  // --- Sachprotokoll ---
+  //
+  // Verdichtet das Transkript zu dem, was in eine Projektakte gehört:
+  // besprochene Sachverhalte, Hinweise, Entscheidungen, offene Punkte.
+  // Etwas anderes als der Cleanup, der nur Füllwörter entfernt.
+  /** Das erzeugte Protokoll des offenen Meetings, falls vorhanden. */
+  protocol: string | null;
+  protocolRunning: boolean;
+  protocolError: string | null;
+  protocolProgress: { done: number; total: number } | null;
+  loadProtocol: (meetingId: string) => Promise<void>;
+  runProtocol: () => Promise<void>;
 };
 
 export type SkippedPath = { path: string; reason: string };
@@ -463,6 +483,30 @@ export const useMeetingStore = create<State>((set, get) => ({
       void get().loadJobs();
       void get().loadMeetings();
     });
+    const offProtocolProgress = await onEvent<{
+      meeting_id: string;
+      done: number;
+      total: number;
+    }>("protocol.progress", (p) => {
+      set({ protocolProgress: { done: p.done, total: p.total } });
+    });
+    const offProtocolDone = await onEvent<{ meeting_id: string }>(
+      "protocol.done",
+      (p) => {
+        set({ protocolRunning: false, protocolProgress: null, protocolError: null });
+        void get().loadProtocol(p.meeting_id);
+      },
+    );
+    const offProtocolError = await onEvent<{
+      meeting_id: string;
+      message: string;
+    }>("protocol.error", (p) => {
+      set({
+        protocolRunning: false,
+        protocolProgress: null,
+        protocolError: p.message,
+      });
+    });
     // Warteschlange: jede Änderung im Sidecar → Liste neu holen. Das ist
     // ein RPC pro Zustandswechsel und damit billig; lokales Mitzählen
     // würde bei Abbruch und Wiederanlauf zwangsläufig auseinanderlaufen.
@@ -488,8 +532,41 @@ export const useMeetingStore = create<State>((set, get) => ({
       offCleanupError();
       offQueueChanged();
       offRecovered();
+      offProtocolProgress();
+      offProtocolDone();
+      offProtocolError();
       for (const off of offQueueFinished) off();
     };
+  },
+
+  protocol: null,
+  protocolRunning: false,
+  protocolError: null,
+  protocolProgress: null,
+  async loadProtocol(meetingId) {
+    try {
+      const res = await call<{ exists: boolean; markdown: string }>(
+        "protocol.get",
+        { meeting_id: meetingId },
+      );
+      set({ protocol: res.exists ? res.markdown : null });
+    } catch (e) {
+      // Kein actionError: das Fehlen eines Protokolls ist der Normalfall,
+      // und der Nutzer hat hier nichts angestoßen.
+      console.warn("[protocol.get] failed:", e);
+      set({ protocol: null });
+    }
+  },
+  async runProtocol() {
+    const active = get().active;
+    if (!active || get().protocolRunning) return;
+    set({ protocolRunning: true, protocolError: null, protocolProgress: null });
+    try {
+      await call("protocol.generate", { meeting_id: active.id });
+      // Fertig meldet das protocol.done-Ereignis.
+    } catch (e) {
+      set({ protocolRunning: false, protocolError: fehlertext(e) });
+    }
   },
 
   actionError: null,

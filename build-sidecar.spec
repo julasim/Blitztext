@@ -103,6 +103,9 @@ hiddenimports.extend(
         "sidecar.jobs",  # nur in methods.queue_* importiert
         "sidecar.diarization",
         "sidecar.merger",
+        "sidecar.protocol",  # nur in methods.protocol_generate importiert
+        "sidecar.protokoll_vorlage",  # nur in protocol.fuelle_vorlage
+        "sidecar.vokabular_bau",  # nur in methods.settings_vocabulary_suggestion
         "sidecar.meeting_pipeline",
         "sidecar.meeting_store",
         "sidecar.audio_io",

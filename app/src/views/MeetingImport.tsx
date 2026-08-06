@@ -33,6 +33,13 @@ export function MeetingImport() {
   const [paths, setPaths] = useState<string[]>([]);
   const [model, setModel] = useState<string>(MODEL_AUTO);
   const [vocabulary, setVocabulary] = useState("");
+  /** Bekannte Teilnehmerzahl. Leer = pyannote schätzt selbst.
+   *
+   *  Die Parameter gehen seit jeher durch die ganze Kette bis in die
+   *  Pipeline — nur einstellen konnte man sie nirgends. Bei bekannter
+   *  Rundengröße muss die Sprechertrennung nicht in jedem Abschnitt neu
+   *  raten, was gerade bei Tischmikrofonen den Unterschied macht. */
+  const [speakers, setSpeakers] = useState("");
   // Nur zwei Zustände: der frühere Wert "error" wurde gesetzt, aber
   // nirgends gelesen — angezeigt wird der Fehler über `error`.
   const [state, setState] = useState<"idle" | "submitting">("idle");
@@ -125,8 +132,13 @@ export function MeetingImport() {
     setState("submitting");
     setError(null);
     try {
+      const anzahl = Number.parseInt(speakers, 10);
       const res = await enqueue(paths, {
         ...(model === MODEL_AUTO ? {} : { whisper_model: model }),
+        // Bekannte Zahl heißt: genau so viele, nicht "höchstens".
+        ...(Number.isFinite(anzahl) && anzahl >= 1
+          ? { min_speakers: anzahl, max_speakers: anzahl }
+          : {}),
         // Bei Parakeet ist das Feld deaktiviert — dann darf der Wert auch
         // nicht mitgehen. Sonst meldet der Sidecar womöglich gekürzte
         // Begriffe zurück für ein Vokabular, das ohnehin nie gewirkt hätte.
@@ -162,6 +174,7 @@ export function MeetingImport() {
     <div
       style={{
         flex: 1,
+        minHeight: 0, // sonst greift overflowY nicht (Flex-Standard: min-height: auto)
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -211,6 +224,10 @@ export function MeetingImport() {
             value={model}
             onChange={setModel}
           />
+        )}
+
+        {paths.length > 0 && (
+          <SpeakerCountField value={speakers} onChange={setSpeakers} />
         )}
 
         {paths.length > 0 && (
@@ -337,6 +354,71 @@ export function MeetingImport() {
           anderen, damit sich zwei Läufe nicht die Grafikkarte streitig machen.
           Der Fortschritt steht in der Seitenleiste, abbrechen geht dort auch.
         </p>
+      </div>
+    </div>
+  );
+}
+
+/** Bekannte Teilnehmerzahl.
+ *
+ * Ohne Vorgabe schätzt pyannote die Sprecherzahl selbst — und muss dabei
+ * in jedem Abschnitt neu entscheiden. Bei einem Mikrofon in der Tischmitte,
+ * wo die Entfernten leise und ähnlich klingen, führt das zu ständig
+ * überlappenden Segmenten und damit zu zerhackten Absätzen. Eine bekannte
+ * Zahl nimmt der Trennung diese Freiheit.
+ */
+function SpeakerCountField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      <label
+        htmlFor="sprecherzahl"
+        style={{
+          display: "block",
+          fontSize: "var(--fs-xs)",
+          textTransform: "uppercase",
+          fontWeight: 600,
+          letterSpacing: "0.08em",
+          color: "var(--bt-muted-2)",
+          marginBottom: 6,
+        }}
+      >
+        Anzahl Sprecher
+      </label>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <input
+          id="sprecherzahl"
+          type="number"
+          min={1}
+          max={20}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="automatisch"
+          style={{
+            width: 120,
+            padding: "8px 10px",
+            borderRadius: "var(--radius-lg)",
+            border: "1px solid var(--bt-line)",
+            background: "var(--bt-white)",
+            fontSize: "var(--fs-sm)",
+          }}
+        />
+        <span
+          style={{
+            fontSize: "var(--fs-xs)",
+            color: "var(--bt-subtle)",
+            lineHeight: 1.5,
+          }}
+        >
+          Leer lassen, wenn unbekannt. Eine richtige Angabe verbessert die
+          Sprechertrennung deutlich — besonders bei Aufnahmen mit einem
+          Mikrofon in der Tischmitte.
+        </span>
       </div>
     </div>
   );

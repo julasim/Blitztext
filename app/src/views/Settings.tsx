@@ -33,6 +33,7 @@ export function Settings() {
     <div
       style={{
         flex: 1,
+        minHeight: 0, // sonst greift overflowY nicht (Flex-Standard: min-height: auto)
         padding: "32px 40px",
         overflowY: "auto",
         background: "var(--bt-white)",
@@ -197,6 +198,31 @@ function VocabularyEditor() {
     }
   };
 
+  // Ergänzt die Vorschlagsliste, statt das Feld zu überschreiben — wer schon
+  // eigene Begriffe gepflegt hat, soll sie nicht auf Knopfdruck verlieren.
+  // Gespeichert wird nichts: das Ergebnis steht im Feld und will gekürzt
+  // werden, bevor es wirkt.
+  const einfuegen = async () => {
+    setError(null);
+    try {
+      const r = await call<{ vocabulary: string }>("settings.vocabulary_suggestion");
+      const vorhanden = new Set(
+        value
+          .split(/[,\n]/)
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean),
+      );
+      const neu = r.vocabulary
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t && !vorhanden.has(t.toLowerCase()));
+      if (neu.length === 0) return;
+      setValue(value.trim() ? `${value.trim()}, ${neu.join(", ")}` : neu.join(", "));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const dirty = value !== saved;
   const count = value.split(/[,\n]/).filter((t) => t.trim()).length;
 
@@ -228,25 +254,52 @@ function VocabularyEditor() {
           gap: 12,
         }}
       >
+        {/* Der Preis ist gemessen (2026-08-06, 15 Minuten Audio): 0 Begriffe
+            590 s, 15 Begriffe 1116 s, 49 Begriffe 1555 s, 111 Begriffe
+            2274 s. Deshalb steht hier eine Laufzeit-Warnung und keine vage
+            Empfehlung — und ab ~110 Begriffen kürzt Whisper still mit. */}
         <span style={{ fontSize: "var(--fs-xs)", color: "var(--bt-subtle)" }}>
           {count} {count === 1 ? "Begriff" : "Begriffe"}
-          {count > 40 ? " — sehr viele; wenige treffende wirken besser" : ""}
+          {count > 90
+            ? " — zu viele: ein Teil davon erreicht das Modell nicht mehr"
+            : count > 10
+              ? " — verlängert die Transkription spürbar (bei 50 Begriffen etwa aufs Zweieinhalbfache)"
+              : ""}
         </span>
-        <button
-          type="button"
-          onClick={() => void save()}
-          disabled={!dirty || state !== "bereit"}
-          style={{
-            padding: "8px 16px",
-            borderRadius: "var(--radius-lg)",
-            background: dirty ? "var(--bt-ink)" : "var(--bt-paper)",
-            color: dirty ? "var(--bt-white)" : "var(--bt-muted-2)",
-            fontSize: "var(--fs-sm)",
-            fontWeight: 500,
-          }}
-        >
-          {state === "speichert" ? "Speichert…" : dirty ? "Speichern" : "Gespeichert"}
-        </button>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          <button
+            type="button"
+            onClick={() => void einfuegen()}
+            disabled={state !== "bereit"}
+            title="Fachbegriffe aus dem Bauwesen ans Feld anhängen — noch nicht gespeichert"
+            style={{
+              padding: "8px 16px",
+              borderRadius: "var(--radius-lg)",
+              border: "1px solid var(--bt-line)",
+              background: "var(--bt-paper)",
+              color: "var(--bt-ink)",
+              fontSize: "var(--fs-sm)",
+              fontWeight: 500,
+            }}
+          >
+            Bau-Vokabular einfügen
+          </button>
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={!dirty || state !== "bereit"}
+            style={{
+              padding: "8px 16px",
+              borderRadius: "var(--radius-lg)",
+              background: dirty ? "var(--bt-ink)" : "var(--bt-paper)",
+              color: dirty ? "var(--bt-white)" : "var(--bt-muted-2)",
+              fontSize: "var(--fs-sm)",
+              fontWeight: 500,
+            }}
+          >
+            {state === "speichert" ? "Speichert…" : dirty ? "Speichern" : "Gespeichert"}
+          </button>
+        </div>
       </div>
       {error && (
         <div

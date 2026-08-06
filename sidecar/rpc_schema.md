@@ -112,6 +112,17 @@ Warteschlange, höchstens zweimal; danach `failed`.
 | ✅ | `cleanup.run` | `{meeting_id, model?, mode="faithful"}` | `{ok, started, total, mode}` — **async**; `mode ∈ {faithful, readable}`. Idempotent **je Stufe**: übersprungen wird nur, was schon in derselben Stufe bereinigt wurde (`turns.text_clean_mode`) |
 | ✅ | `export.markdown` | `{meeting_id, path, use_cleanup=false}` | `{ok, bytes, path}` |
 
+### Protokoll
+
+Verdichtet das Transkript zu einem **Sachprotokoll** (was besprochen, worauf
+hingewiesen, was entschieden wurde) — im Gegensatz zum Cleanup, der Absatz
+für Absatz glättet und die Wortmenge behält.
+
+| Status | Method | Request | Response |
+|---|---|---|---|
+| ✅ | `protocol.generate` | `{meeting_id, model?}` | `{ok, started, sections}` — **async**, Ergebnis über `protocol.done`. Doppelstart wird abgewiesen. Ohne Transkript: `INVALID_PARAMS` |
+| ✅ | `protocol.get` | `{meeting_id}` | `{exists, markdown}` — liest `protokoll.md` aus dem Meeting-Ordner. **Keine DB-Spalte**, also auch keine Migration |
+
 ### Settings
 
 | Status | Method | Request | Response |
@@ -119,6 +130,7 @@ Warteschlange, höchstens zweimal; danach `failed`.
 | ✅ | `settings.get` | — | `{hf_token_present, hf_token_hint, credential_store_error}` — `credential_store_error` ist leer, solange die Windows-Anmeldeinformationsverwaltung antwortet. Ist sie gestört, wäre „kein Token“ eine falsche Auskunft |
 | ✅ | `settings.get_vocabulary` | — | `{vocabulary}` — dauerhafte Firmen-Wortliste aus der `settings`-Tabelle |
 | ✅ | `settings.set_vocabulary` | `{vocabulary}` | `{ok}` |
+| ✅ | `settings.vocabulary_suggestion` | — | `{vocabulary, count}` — Vorschlagsliste Bauwesen (`sidecar/vokabular_bau.py`). Speichert **nicht**; das Frontend trägt sie ins Feld ein, wo sie gekürzt werden kann |
 | ✅ | `settings.set_hf_token` | `{token}` | `{ok, stored}` — leerer String löscht die Credential |
 | ✅ | `settings.test_hf_token` | — | `{ok, stage, user?, repos?, message}`, `stage ∈ {missing, deps, auth, gated, ready}`. `repos` = Zugriff je gated Diarization-Repo (3.1 **und** community-1); `ok` richtet sich nach dem Repo der installierten pyannote-Version |
 
@@ -136,6 +148,9 @@ Der HF-Token liegt im Windows-Anmeldeinformationsmanager (`keyring`, Dienst
 | `cleanup.progress` | `{meeting_id, processed, skipped, total, turn_id}` |
 | `cleanup.done` | `{meeting_id, processed, skipped, total}` |
 | `cleanup.error` | `{meeting_id, turn_id?, message, fatal}` — **`fatal: false`** heißt: ein einzelner Absatz ging schief, der Lauf geht weiter (nur dann folgt noch ein `cleanup.done`). Nur bei `fatal: true` darf die UI ihre Fortschrittsanzeige beenden |
+| `protocol.progress` | `{meeting_id, done, total}` — gezählt in **Abschnitten**, nicht in Absätzen. Ein Abschnitt sind mehrere Minuten Gespräch, die Anzeige springt also grob |
+| `protocol.done` | `{meeting_id, sections, skipped}` — `skipped` sind Abschnitte ohne Protokollwürdiges (Small Talk); ein hoher Wert ist normal |
+| `protocol.error` | `{meeting_id, message}` — immer fatal, anders als `cleanup.error` |
 | `queue.enqueued` | `{job_id, meeting_id, path}` |
 | `queue.job_started` | `{job_id, meeting_id, path}` |
 | `queue.job_done` | `{job_id, meeting_id}` |

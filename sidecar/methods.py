@@ -183,6 +183,19 @@ def settings_set_vocabulary(vocabulary: str = "") -> dict:
     return {"ok": True}
 
 
+@method("settings.vocabulary_suggestion")
+def settings_vocabulary_suggestion() -> dict:
+    """Vorschlagsliste Bauwesen — das Frontend trägt sie ins Feld ein.
+
+    Bewusst **nicht** automatisch gespeichert: Die Liste landet zum Ansehen
+    und Kürzen im Feld, gespeichert wird erst auf Knopfdruck. So bleibt
+    sichtbar, was das Modell zu hören erwartet.
+    """
+    from sidecar.vokabular_bau import KERN, kern_als_text
+
+    return {"vocabulary": kern_als_text(), "count": len(KERN)}
+
+
 @method("queue.enqueue")
 def queue_enqueue(
     paths: list[str],
@@ -475,6 +488,111 @@ def _cleanup_arbeiten(meeting_id: str, model: str | None, mode: str, log) -> Non
             "total": n,
         },
     )
+
+
+# --- Sachprotokoll ---------------------------------------------------------
+#
+# Bewusst als Datei im Meeting-Ordner statt in der DB: eine Migration ist
+# forward-only, und dieses Feature muss sich erst im Alltag bewähren. Der
+# Ordner liegt ohnehin neben der Audiodatei und wird beim Löschen des
+# Meetings mit entfernt.
+
+#: Meetings, für die gerade ein Protokoll erzeugt wird.
+_protokoll_laeuft: set[str] = set()
+_protokoll_lock = threading.Lock()
+
+
+def _protokoll_pfad(meeting_id: str) -> Path:
+    return meeting_store.meeting_folder(meeting_id) / "protokoll.md"
+
+
+@method("protocol.get")
+def protocol_get(meeting_id: str) -> dict:
+    """Das gespeicherte Protokoll, falls vorhanden."""
+    pfad = _protokoll_pfad(meeting_id)
+    if not pfad.exists():
+        return {"exists": False, "markdown": ""}
+    return {"exists": True, "markdown": pfad.read_text(encoding="utf-8")}
+
+
+@method("protocol.generate")
+def protocol_generate(meeting_id: str, model: str | None = None) -> dict:
+    """Sachprotokoll aus dem Transkript erzeugen — **asynchron**.
+
+    Anders als ``cleanup.run`` (das Absatz für Absatz glättet) verdichtet
+    dieser Lauf: was besprochen wurde, worauf hingewiesen wurde, was
+    entschieden wurde. Ergebnis über ``protocol.done``; der Fortschritt
+    kommt als ``protocol.progress``, weil eine Stunde Audio mehrere Minuten
+    braucht.
+    """
+    import logging
+
+    log = logging.getLogger("sidecar.protocol")
+
+    if not _ollama_available():
+        raise RpcError(
+            APP_DEPENDENCY_MISSING,
+            "Ollama ist nicht erreichbar (127.0.0.1:11434). Das Protokoll "
+            "braucht ein lokal laufendes Ollama mit geladenem Modell.",
+        )
+
+    meeting_store.init_db()
+    m = meeting_store.get_meeting(meeting_id)
+    if m is None:
+        raise RpcError(APP_NOT_FOUND, f"meeting {meeting_id} not found")
+    if not m["turns"]:
+        raise RpcError(
+            INVALID_PARAMS, "Das Meeting hat kein Transkript, aus dem sich ein "
+            "Protokoll erzeugen ließe."
+        )
+
+    def _worker() -> None:
+        from sidecar.protocol import erzeuge_protokoll
+
+        try:
+            def melde(fertig: int, gesamt: int) -> None:
+                emit_event(
+                    "protocol.progress",
+                    {"meeting_id": meeting_id, "done": fertig, "total": gesamt},
+                )
+
+            ergebnis = erzeuge_protokoll(m, model=model, on_progress=melde)
+            _protokoll_pfad(meeting_id).write_text(
+                ergebnis["protokoll"], encoding="utf-8"
+            )
+            log.info(
+                "protocol.generate fertig: meeting=%s abschnitte=%d",
+                meeting_id, ergebnis["abschnitte"],
+            )
+            emit_event(
+                "protocol.done",
+                {
+                    "meeting_id": meeting_id,
+                    "sections": ergebnis["abschnitte"],
+                    "skipped": ergebnis["uebersprungen"],
+                },
+            )
+        except Exception as e:  # noqa: BLE001 — der Worker darf nicht platzen
+            log.exception("protocol.generate fehlgeschlagen")
+            emit_event(
+                "protocol.error", {"meeting_id": meeting_id, "message": str(e)}
+            )
+        finally:
+            with _protokoll_lock:
+                _protokoll_laeuft.discard(meeting_id)
+
+    with _protokoll_lock:
+        if meeting_id in _protokoll_laeuft:
+            raise RpcError(
+                INVALID_PARAMS, "Für dieses Meeting läuft bereits eine "
+                "Protokoll-Erzeugung."
+            )
+        _protokoll_laeuft.add(meeting_id)
+
+    threading.Thread(
+        target=_worker, name=f"protocol-{meeting_id[:8]}", daemon=True
+    ).start()
+    return {"ok": True, "started": True, "turns": len(m["turns"])}
 
 
 # --- Export ----------------------------------------------------------------

@@ -110,3 +110,44 @@ def test_firmenliste_ueberlebt_neustart(store):
     store.init_db()
 
     assert call_method("settings.get_vocabulary")["vocabulary"] == "ÖNORM\nBewehrung"
+
+
+# --- Die mitgelieferte Vorschlagsliste --------------------------------------
+
+
+def test_vorschlag_passt_ohne_kuerzung_durch():
+    """Ein Vorschlag, der schon allein die Grenze sprengt, wäre eine Falle:
+    Er sähe im Feld vollständig aus und käme beim Modell halbiert an."""
+    from sidecar.vokabular_bau import kern_als_text
+
+    _hotwords, weggefallen = build_hotwords(kern_als_text(), "")
+
+    assert weggefallen == []
+
+
+def test_vorschlag_laesst_platz_fuers_projektfeld():
+    """Die Namen der Beteiligten wechseln je Projekt und wirken dort mehr
+    als jeder Normbegriff — sie müssen noch hineinpassen."""
+    from sidecar.vokabular_bau import kern_als_text
+
+    assert len(kern_als_text()) < HOTWORDS_MAX_CHARS - 100
+
+
+def test_vorschlag_ohne_doppelte_begriffe():
+    from sidecar.vokabular_bau import KERN, WEITERE
+
+    alle = [b.lower() for b in KERN + WEITERE]
+
+    assert len(alle) == len(set(alle))
+
+
+def test_vorschlag_wird_nicht_von_selbst_gespeichert(store):
+    """Der Knopf trägt ein, gespeichert wird auf einem zweiten Knopf. Sonst
+    verlöre eine gepflegte Firmenliste ihren Inhalt an einen Fehlklick."""
+    call_method("settings.set_vocabulary", {"vocabulary": "PPSV"})
+
+    vorschlag = call_method("settings.vocabulary_suggestion")
+
+    assert vorschlag["count"] > 0
+    assert "Sickerschacht" in vorschlag["vocabulary"]
+    assert call_method("settings.get_vocabulary")["vocabulary"] == "PPSV"
