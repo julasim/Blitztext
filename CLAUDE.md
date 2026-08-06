@@ -8,14 +8,20 @@ pflegen. Stufe 1 reicht meist; Stufe 2 nur lesen, wenn die Aufgabe es verlangt.
 
 # Blitztext
 
-Zuletzt aktualisiert: 2026-08-05 · Version 0.2.0
+Zuletzt aktualisiert: 2026-08-06 · Version 0.3.0
 
 ## Worum geht's
 
 **Transkribiert Audiodateien lokal** (MP3, WAV, M4A, FLAC, OGG) auf Windows:
 Import → Whisper oder Parakeet → Sprecher-Trennung → Review → LLM-Cleanup →
 Export. Dateien und ganze Ordner laufen als Warteschlange durch, seriell und
-abbrechbar. Eigenes Produkt von Julius (GitHub `julasim/Blitztext`,
+abbrechbar.
+
+**Seit 0.3.0 auch ein Sachprotokoll** (`protocol.generate`): was besprochen
+wurde, worauf hingewiesen wurde, was entschieden wurde — gegliedert nach
+einer festen Rubriken-Vorlage. Das ist die eigentliche Nutzung: Für den
+Wortlaut gibt es die Audiodatei; gebraucht wird der Sachverhalt. Der
+Cleanup glättet dagegen nur Absatz für Absatz und behält die Wortmenge. Eigenes Produkt von Julius (GitHub `julasim/Blitztext`,
 Arbeitsbranch `feat/meeting-mode`). Alles on-device.
 
 **Fokus seit 2026-07-23: nur noch Dateien.** Diktat per Hotkey und
@@ -31,7 +37,11 @@ keinen Zugang zu Cloud-Modellen und soll keinen geben.
 - **Whisper** (`faster-whisper`) — lokal, GPU oder CPU.
 - **pyannote 4 / community-1** — lokal, GPU (seit torch 2.8; Details in
   den Stolpersteinen).
-- **Ollama** für den Cleanup — `127.0.0.1:11434`, also Loopback.
+- **Ollama** für Cleanup **und Sachprotokoll** — `127.0.0.1:11434`, also
+  Loopback. Vorgabemodell `gemma4:12b`, am 2026-08-06 gegen `qwen3.5:9b` an
+  echtem Material gemessen: Gemma braucht länger (12:15 gegen 5:44 min),
+  hält aber die Gliederung durch und führt Namensvarianten zusammen — Qwen
+  schrieb mehr und verlor die Struktur.
 
 Der Code enthält **keine API-Keys, keinen Inferenz-Endpunkt, keine
 Telemetrie**. Achtung dabei: **pyannote 4 bringt eigene Opt-out-Telemetrie
@@ -99,12 +109,15 @@ plus CUDA-Verifikation.
 
 ## Offene Punkte / nächste Schritte
 
-- **Das ausgelieferte 0.2.0-Paket ist unbrauchbar — nicht verteilen.** Sein
-  Sidecar kann `pyannote.audio` nicht laden, jedes damit erzeugte Transkript
-  hat **genau einen Sprecher**. Ursache gefunden am 2026-08-05: `pandas` stand
-  in `excludes` der Spec, wird aber von `pyannote.database.util` auf
-  Modulebene importiert (Details im Stolperstein unten). Behoben; ein neues
-  Paket muss gebaut und nach der Prüfliste in `BUILD.md` abgenommen werden.
+- **Das alte 0.2.0-Paket nicht mehr verteilen** — sein Sidecar kann
+  `pyannote.audio` nicht laden, jedes damit erzeugte Transkript hat **genau
+  einen Sprecher** (Ursache: `pandas` in `excludes`, Details im Stolperstein
+  unten). **0.3.0 ist der gute Stand:** am gepackten Sidecar geprüft, das Log
+  zeigt `preload complete (device=cuda)`, und `pandas` liegt nachweislich im
+  PYZ-Archiv. Was daran **noch aussteht**, ist der Durchlauf der Prüfliste in
+  `BUILD.md` an der laufenden App — die Punkte 3 bis 8 (Whisper, Parakeet,
+  Sprechertrennung, Warteschlange, Protokoll, Vokabular-Knopf) verlangen
+  Bedienung und kann nur Julius abnehmen.
 - **`speaker.sample` fehlt.** Der Plan (Schritt 1 + 4.9) sieht beim
   Sprecher-Umbenennen ein **5-Sekunden-Audio-Snippet** vor, damit man hört,
   wen man gerade benennt. Rename und Merge sind in `SpeakerList.tsx` fertig,
@@ -158,7 +171,7 @@ cd app\src-tauri; cargo check
 **Tests** — pytest, Konfiguration in `pytest.ini`:
 
 ```powershell
-.\.venv-sidecar\Scripts\python.exe -m pytest            # 152 Tests, ~12 s
+.\.venv-sidecar\Scripts\python.exe -m pytest            # 172 Tests, ~15 s
 .\.venv-sidecar\Scripts\python.exe -m pytest --slow     # + echte MP3 durch Whisper/pyannote
 .\.venv-sidecar\Scripts\python.exe -m pytest --ollama   # + Cleanup gegen lokales Ollama
 .\.venv-sidecar\Scripts\python.exe -m pytest -k merger  # einzelne Datei/Fall
@@ -255,14 +268,20 @@ Was man über die Pipeline wissen muss:
 - `Transcriber` (`core/transcription.py`) — faster-whisper-Wrapper.
 - `_connect()` (`sidecar/meeting_store.py`) — SQLite-Zugang; einzige Verbindung,
   bewusst modulglobal (Single-Prozess-Modell).
-- `cleanup_turn()` (`core/llm.py`) — einziger LLM-Aufruf im Produkt.
+- `core/llm.py` — **alle** LLM-Aufrufe, alle über `_call_ollama_local`:
+  `cleanup_turn()` glättet einen Turn, `summarize_section()` verdichtet einen
+  Gesprächsabschnitt, `answer_section()` beantwortet eine Protokoll-Rubrik.
+  Die beiden letzten arbeiten mit `PROTOKOLL_NUM_CTX` (16384) statt des
+  Standardfensters — sonst fiele der Anfang der Besprechung weg, und dort
+  stehen die Grundlagen, auf die sich der Rest bezieht.
 - `SidecarHandle` (`app/src-tauri/src/sidecar.rs`) — Rust-Seite: spawnt/verwaltet
   den Sidecar-Prozess, demultiplext Antworten per `id`.
 
 ## Datei-Landkarte
 
 **Python-Kern** (`core/`): `transcription.py` (Whisper), `parakeet.py`
-(Parakeet über ONNX, Token→Wort + Fenster-Naht), `llm.py` (Ollama-Cleanup),
+(Parakeet über ONNX, Token→Wort + Fenster-Naht), `llm.py` (Ollama: Cleanup
+und Protokoll),
 `log.py`. Mehr ist nicht drin.
 
 **Sidecar** (`sidecar/` — das Backend):
@@ -271,12 +290,20 @@ Was man über die Pipeline wissen muss:
 - `jobs.py` — die Warteschlange (Worker-Thread, Zustände, Wiederanlauf).
 - `meeting_pipeline.py`, `diarization.py`, `merger.py`, `meeting_store.py`,
   `audio_io.py` — die Pipeline (Datei → Whisper+pyannote → Turns → SQLite).
+- `protocol.py` + `protokoll_vorlage.py` — das **Sachprotokoll**: Turns zu
+  Abschnitten gruppieren, je Abschnitt zusammenfassen, dann die Rubriken der
+  Vorlage füllen. Kopf und Zahlen-Anhang entstehen **ohne** Modell (siehe
+  „Stolpersteine": beide getesteten Modelle rechnen falsch).
+- `vokabular_bau.py` — Fachbegriffe Bauwesen als Vorschlagsliste. Reine
+  Daten, kein Verhalten; landet erst per Knopf in der Firmenliste.
 
 **Tests** (`tests/`, pytest): `conftest.py` (isolierte DB und Queue je Test,
 Opt-in-Flags), `test_merger.py`, `test_store.py`, `test_migrations.py`,
 `test_export.py`, `test_rpc.py`, `test_jobs.py`, `test_audio_io.py`,
 `test_vocabulary.py`, `test_parakeet.py`, `test_benchmark.py`,
 `test_cleanup_mechanik.py` (Ablauflogik des Cleanups **ohne** LLM),
+`test_protocol.py` (Abschnittsbildung und der modellfreie Zahlen-Anhang —
+beides reine Funktionen, deshalb im Standardlauf),
 `test_packaging.py` (was in `excludes` steht, darf zur Laufzeit nicht
 gebraucht werden); markiert und übersprungen: `test_pipeline_mp3.py` und
 `test_sidecar_start.py` (`--slow`; letzterer startet den Sidecar als echten
@@ -337,11 +364,43 @@ Prozess und prüft stdio-Transport plus RPC-Vertrag), `test_cleanup.py`
   Material aus Nahmikrofonen. Nebenbei: `deepfilternet` fordert `numpy<2.0`,
   pyannote 4 fordert `>=2.2` — der Pin ist veraltet (läuft auch mit numpy 2),
   aber pip meldet bei jeder Installation einen Konflikt.
-- **Fachvokabular kann schaden.** `hotwords` wirkt bei jedem Fenster und
-  verschiebt die Ausgabe bei schwierigem Audio massiv — im Test stieg der
-  Schleifenanteil von 1,7 auf 5,2 %. Personennamen sind riskant (fallen in
-  Begrüßungspassagen, wo ohnehin alle durcheinanderreden), Normbegriffe
-  sind sicher. Sparsam halten und messen.
+- **Fachvokabular kostet Laufzeit — das ist sein eigentlicher Preis.**
+  Gemessen am 2026-08-06 (15 Minuten echtes Material, `large-v3`):
+
+  | Begriffe | Laufzeit | Faktor |
+  |---|---|---|
+  | 0 | 590 s | — |
+  | 15 | 1116 s | 1,9× |
+  | 49 | 1555 s | 2,6× |
+  | 111 | 2274 s | 3,9× |
+
+  Bei einer 69-Minuten-Besprechung sind das 45 Minuten gegen fast drei
+  Stunden. **Die Schleifen blieben in allen vier Stufen bei 0,00 %** — der
+  Juli-Befund („Vokabular treibt den Schleifenanteil auf 5,2 %") war eine
+  Fehlzuschreibung: Ursache war `condition_on_previous_text=True`, das
+  inzwischen auf `False` steht. Das Vokabular selbst schadet der Qualität
+  nicht, es macht die Transkription langsam.
+  Die **Nutzen**-Seite ist unbelegt: Der Versuch mass die ersten 15 Minuten,
+  in denen die verhörten Begriffe kaum fallen, und speicherte den erzeugten
+  Text nicht — beides Fehler im Aufbau, nicht im Ergebnis. Wer das nachholt,
+  nimmt das Fenster **ab Minute 7** (`scratchpad/wo_fallen_sie.py` zeigt die
+  Verteilung) und schreibt den Text mit.
+- **Über ~110 Begriffe kürzt Whisper still mit.** `build_hotwords` begrenzt
+  auf `HOTWORDS_MAX_CHARS = 700` Zeichen als Näherung für die harte
+  Token-Grenze (`max_length // 2` ≈ 224). Die volle Sammlung aus
+  `vokabular_bau.py` (111 Begriffe, 1507 Zeichen) verliert dabei **55
+  Begriffe** — man zahlt die volle Laufzeit für die halbe Liste. `KERN`
+  (49 Begriffe, 570 Zeichen) passt durch und lässt 130 Zeichen für die
+  Projektnamen beim Import, die dort Vorrang haben.
+- **Sprachmodelle rechnen falsch — und zwar beide getesteten.** Am
+  2026-08-06 an echtem Material gemessen: Gemma 4 12B machte aus „181 m²"
+  eine 180, Qwen 3.5 9B aus „30 m²" eine 10. Nicht als Tippfehler, sondern
+  als stille Zwischenrechnung. Deshalb steht in allen Protokoll-Prompts
+  „NIEMALS selbst rechnen", **und** deshalb entstehen Kopf und
+  Zahlen-Anhang (`sammle_zahlen`) rein regulär-sprachlich, ohne Modell: Was
+  das Modell nie zu sehen bekommt, kann es auch nicht verdrehen. Wer den
+  Anhang für Beiwerk hält und ihn entfernt, nimmt dem Protokoll seine
+  einzige belastbare Zahlenquelle.
 - **`pct` in `meeting.progress` ist 0..1**, nicht 0..100 — trotz des Namens.
 - **`created_at` hat nur Sekunden-Auflösung** (`_now_iso`). Deshalb sortiert
   `list_meetings` mit `created_at DESC, rowid DESC` — beim Stapel-Import fällt
@@ -401,6 +460,14 @@ Prozess und prüft stdio-Transport plus RPC-Vertrag), `test_cleanup.py`
   also alles grün. `tests/test_packaging.py` prüft das jetzt: der schnelle
   Test hält `pandas` fest, der `--slow`-Test importiert die echte
   Laufzeitkette und vergleicht `sys.modules` gegen die ganze excludes-Liste.
+- **Wegwerf-`APPDATA`-Ordner nie blind rekursiv löschen.** Jeder Mess- und
+  Abnahmelauf setzt eine **Junction** `<wegwerf>\Blitztext\models` auf den
+  echten Modell-Cache (7,3 GB) — sonst zöge jeder Lauf die Modelle neu. Ein
+  `Remove-Item -Recurse` kann dieser Junction folgen und den echten Cache
+  leeren. Richtig: erst die Links einzeln mit `cmd /c rmdir <pfad>` lösen
+  (das entfernt nur den Link), Junction-Freiheit prüfen
+  (`Get-ChildItem -Recurse -Attributes ReparsePoint`), dann löschen.
+  Danach die Dateizahl im echten Cache gegenprüfen.
 - **Ein fehlender Ordner in `_internal` beweist gar nichts.** PyInstaller legt
   reine Python-Pakete ins eingebettete **PYZ-Archiv** (in der EXE), nicht als
   Verzeichnis daneben. Wer prüfen will, ob ein Modul mitgepackt wurde, liest
@@ -422,6 +489,79 @@ Prozess und prüft stdio-Transport plus RPC-Vertrag), `test_cleanup.py`
 ---
 
 ## Änderungslog
+
+- 2026-08-06 — **Sachprotokoll, Bau-Vokabular, Version 0.3.0.** Anlass war
+  ein Satz von Julius zum ersten echten Transkript: „Ich brauche kein Wort
+  für Wort, dafür habe ich die Audiodatei — ich brauche den Sachverhalt."
+  **172 Tests** (vorher 152).
+  - **Was die Transkript-Analyse ergab, bevor irgendetwas gebaut wurde:**
+    58 % der Absätze tragen eine Überlappungsmarkierung, 25 % sind ≤3 Wörter
+    lang, 87,7 % der Wörter gehören einem einzigen Sprecher — aber **null
+    Halluzinationsschleifen**. Ein Gegenlauf mit fest vorgegebener
+    Sprecherzahl (`min=max=5`) brachte **nichts** (62 % statt 58 %). Die
+    Sprechertrennung ist hier physikalisch begrenzt, nicht falsch
+    eingestellt: ein Handy in der Tischmitte, fünf Personen im Raum. Damit
+    war klar, dass die Verbesserung nicht in der Transkription liegen kann,
+    sondern in dem, was danach daraus gemacht wird.
+  - **Sachprotokoll** (`sidecar/protocol.py`, `protokoll_vorlage.py`):
+    Turns → Abschnitte an Turn-Grenzen → je Abschnitt eine Zusammenfassung
+    → feste Rubriken (Besprochene Themen, Entscheidungen, Hinweise und
+    Vorbehalte, Offene Punkte, Nächste Schritte). Die Vorlage ist der Kern
+    des Entwurfs: Je mehr vorgegeben ist, desto weniger kann das Modell
+    dazuerfinden oder vergessen.
+  - **Kopf und Zahlen-Anhang entstehen ohne Modell.** Grund ist eine
+    Messung, nicht Vorsicht: Gemma machte aus „181 m²" eine 180, Qwen aus
+    „30 m²" eine 10 — beide getesteten Modelle rechnen still falsch. Was das
+    Modell nie sieht, kann es nicht verdrehen.
+  - **Modellwahl gemessen:** `gemma4:12b` gegen `qwen3.5:9b` an echtem
+    Material. Gemma braucht mehr als doppelt so lang (12:15 gegen 5:44 min),
+    hält aber die Gliederung durch und führt Namensvarianten zusammen; Qwen
+    schrieb fast doppelt so viel und verlor die Struktur. Gemma ist jetzt
+    Vorgabe. Dazu `num_ctx` explizit gesetzt — Ollamas Standardfenster hätte
+    bei einer Stunde Gespräch den **Anfang** stillschweigend abgeschnitten.
+  - **Bau-Vokabular** (`sidecar/vokabular_bau.py`): 49 Kernbegriffe, per
+    Knopf in die Firmenliste einfügbar. Er *ergänzt* das Feld und speichert
+    **nicht** — sonst kostete ein Fehlklick eine gepflegte Liste.
+  - **Der Vokabular-Versuch: eine Hälfte belastbar, eine nicht.** Der Preis
+    ist gemessen (Laufzeit ×1,9 bis ×3,9, Schleifen durchweg 0,00 % — siehe
+    Stolperstein), der **Nutzen nicht**: Ich hatte die ersten 15 Minuten
+    geschnitten, ohne zu prüfen, ob die verhörten Begriffe dort fallen, und
+    den erzeugten Text nicht gespeichert. Beides Fehler im Aufbau. Der
+    Nachweis steht damit aus; die 49er-Auswahl ist über die Token-Grenze
+    begründet, nicht über gemessenen Nutzen.
+  - **Nebenbefund, der eine alte Doku-Aussage widerlegt:** Der Juli-Eintrag
+    schrieb dem Vokabular an, den Schleifenanteil auf 5,2 % zu treiben. In
+    allen vier Stufen blieb er jetzt bei 0,00 % — die Ursache war
+    `condition_on_previous_text`, das inzwischen auf `False` steht. Der
+    Stolperstein ist entsprechend neu geschrieben.
+  - **Toter Code:** `build_protocol` + `PROTOKOLL_SYSTEM_PROMPT` — der
+    ursprüngliche Sammel-Prompt, von der Rubriken-Vorlage abgelöst, aber nie
+    entfernt.
+  - **Zwei Contract-Lücken geschlossen:** `protocol.generate`/`protocol.get`
+    samt ihren drei Events fehlten komplett in `rpc_schema.md` — versäumt,
+    als das Feature entstand. Dazu `settings.vocabulary_suggestion`.
+    `tests/test_packaging.py` hat den fehlenden `hiddenimports`-Eintrag für
+    `sidecar.vokabular_bau` selbst gefangen; die Abnahmeliste in `BUILD.md`
+    hat jetzt eigene Punkte für Protokoll und Vokabular, weil beide
+    function-local importieren und damit erst **im Paket** auffallen.
+  - **Paket gebaut:** `release\Blitztext-0.3.0-portable\` (4,73 GB). Am
+    **gepackten** Stand geprüft, nicht am Quellcode: `ping` meldet 0.3.0,
+    das Log zeigt `preload complete (device=cuda)` — der Ein-Sprecher-Fehler
+    von 0.2.0 ist damit weg —, `pandas` und die drei function-local
+    importierten Module liegen nachweislich im PYZ-Archiv, und die portable
+    `Blitztext.exe` fährt aus dem Release-Ordner hoch (Job-Worker startet,
+    Ollama wird gefunden, `stdin closed, exiting cleanly` beim Beenden).
+    Alles gegen ein isoliertes `APPDATA`. **Offen bleibt** die Bedien-Abnahme
+    (BUILD.md, Punkte 3–8).
+    Beim Kopieren nach `binaries\sidecar\` wird der Zielordner jetzt zuerst
+    geleert (bis auf `PLATZHALTER.txt`) — `Copy-Item` überschreibt nur, eine
+    im neuen Bau entfallene Datei überlebte sonst unbemerkt im Paket.
+  - **Aufgeräumt: 9,7 GB** — `build\`, `dist\` und das als unbrauchbar
+    markierte `release\Blitztext-0.2.0-portable\`. **Vorsicht bei den
+    Wegwerf-`APPDATA`-Ordnern:** Sie tragen Junctions auf den echten
+    7,3-GB-Modell-Cache. Erst die acht Links einzeln mit `cmd /c rmdir`
+    lösen, dann rekursiv löschen — sonst nimmt das Aufräumen die Modelle
+    mit. Cache und produktive DB nach dem Lauf gegengeprüft: unverändert.
 
 - 2026-08-05 — **Vollprüfung mit vier Prüf-Agenten und Sanierungsrunde.**
   Anlass: Prüfauftrag über Installer, Backend, Frontend. Rund 60 Befunde,

@@ -27,7 +27,7 @@ import threading
 import traceback
 from typing import Any, Callable
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 # -- Registry ---------------------------------------------------------------
 

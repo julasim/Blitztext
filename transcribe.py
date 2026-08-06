@@ -5,10 +5,14 @@ Diarization, falls HF-Token vorhanden, sonst Single-Speaker-Fallback)
 und schreibt das Ergebnis als Markdown raus. Optional auch direkt
 LLM-Cleanup über Ollama.
 
-Beispiele:
-    py -3.11 transcribe.py "C:\\path\\to\\meeting.mp3"
-    py -3.11 transcribe.py meeting.wav --cleanup --out protokoll.md
-    py -3.11 transcribe.py meeting.m4a --max-speakers 4
+Das **Sachprotokoll** (`protocol.generate`) gibt es hier nicht — es
+verdichtet, statt zu glätten, und läuft nur über die App.
+
+Es gibt keinen ``py``-Launcher auf dieser Maschine; immer die venv nehmen:
+
+    .\\.venv-sidecar\\Scripts\\python.exe transcribe.py "C:\\path\\to\\meeting.mp3"
+    .\\.venv-sidecar\\Scripts\\python.exe transcribe.py meeting.wav --cleanup --out transkript.md
+    .\\.venv-sidecar\\Scripts\\python.exe transcribe.py meeting.m4a --max-speakers 4
 
 Output landet (wenn nicht --out gesetzt) neben der Audiodatei als
 ``<basename>.md``. Ein Eintrag in der Meeting-DB unter %APPDATA%\\Blitztext

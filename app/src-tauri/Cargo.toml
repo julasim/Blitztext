@@ -1,6 +1,6 @@
 [package]
 name = "blitztext"
-version = "0.2.0"
+version = "0.3.0"
 description = "Blitztext — local speech-to-text and meeting transcription"
 authors = ["Julius Sima"]
 license = ""

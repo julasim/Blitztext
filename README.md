@@ -1,12 +1,12 @@
 # Blitztext
 
 Transkribiert Audiodateien lokal auf Windows — MP3, WAV, M4A, FLAC, OGG.
-Mit Sprecher-Trennung, Fachvokabular, optionalem LLM-Cleanup und
-Markdown-Export. Dateien und ganze Ordner laufen als Warteschlange durch,
-ein Auftrag nach dem anderen.
+Mit Sprecher-Trennung, Fachvokabular, **Sachprotokoll**, optionalem
+LLM-Cleanup und Markdown-Export. Dateien und ganze Ordner laufen als
+Warteschlange durch, ein Auftrag nach dem anderen.
 
 **Ausschließlich lokale Modelle.** Whisper, Parakeet und pyannote laufen auf
-dem Rechner, der Cleanup gegen Ollama auf `127.0.0.1`. Keine Cloud-Modelle,
+dem Rechner, Cleanup und Protokoll gegen Ollama auf `127.0.0.1`. Keine Cloud-Modelle,
 keine API-Keys, keine Telemetrie, keine offenen Ports, kein Mikrofonzugriff.
 Ins Netz geht die App nur, um die Modelle **einmal herunterzuladen** — danach
 arbeitet sie offline.
@@ -20,6 +20,7 @@ arbeitet sie offline.
 | **Fachvokabular** | Dauerhafte Firmenliste in den Einstellungen plus ein Feld pro Import. Hilft Whisper bei Normbezeichnungen und Namen. |
 | **Warteschlange** | Seriell, abbrechbar, übersteht einen Absturz (Zustand in der DB). Ein fehlgeschlagener Auftrag hält die übrigen nicht auf. |
 | **Cleanup** | Zwei Stufen: *wortgetreu* (nur Füllwörter und Stotterer) und *lesbar* (zusätzlich Satzzeichen). Der Rohtext bleibt immer erhalten. |
+| **Sachprotokoll** | Verdichtet die Besprechung zu Themen, Entscheidungen, Hinweisen, offenen Punkten und nächsten Schritten — entlang einer festen Rubriken-Vorlage. Kopf und Zahlen-Anhang entstehen **ohne** Sprachmodell, weil Modelle beim Rechnen still danebenliegen. |
 | **Export** | Markdown, wahlweise mit oder ohne Cleanup. |
 
 ## Repository-Struktur
@@ -28,7 +29,7 @@ arbeitet sie offline.
 |---|---|
 | `app/` | Tauri 2 + React + TypeScript. Die Desktop-App; spawnt den Sidecar als Child-Prozess. |
 | `sidecar/` | Python-Backend. JSON-RPC 2.0 über stdin/stdout, siehe `sidecar/rpc_schema.md`. Besitzt die SQLite-DB und die Warteschlange. |
-| `core/` | Modell-Wrapper: Whisper (`transcription.py`), Parakeet (`parakeet.py`), Ollama-Cleanup (`llm.py`), Log. |
+| `core/` | Modell-Wrapper: Whisper (`transcription.py`), Parakeet (`parakeet.py`), Ollama für Cleanup und Protokoll (`llm.py`), Log. |
 | `benchmark/` | Messaufbau: WER, Halluzinationsschleifen und Sprecheranzahl gegen korrigierte Referenzen. Nicht Teil der App. |
 | `tests/` | pytest — siehe unten. |
 | `transcribe.py` | CLI: eine Audiodatei durch die volle Pipeline → Markdown. Ohne GUI. |

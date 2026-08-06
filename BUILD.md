@@ -121,6 +121,15 @@ schlägt bei Drift fehl. Der Test entstand, weil die Statusleiste noch
    `preload complete (device=…)` enthalten, nicht `preload failed`.
 6. Einen Ordner mit mehreren Dateien ziehen → Warteschlange arbeitet sie
    nacheinander ab, Abbrechen funktioniert.
+7. **Sachprotokoll erzeugen** (Ollama muss laufen). Eigener Prüfpunkt, weil
+   `sidecar.protocol` und `sidecar.protokoll_vorlage` **function-local**
+   importiert werden — PyInstaller sieht solche Importe beim Bytecode-Scan
+   nicht, und ein fehlender Eintrag in `hiddenimports` fällt erst hier auf,
+   nie im Dev-Modus. Im Ergebnis muss der Kopf (Titel, Datum, Teilnehmer)
+   stehen **und** der Zahlen-Anhang gefüllt sein.
+8. **Einstellungen → „Bau-Vokabular einfügen"** drücken: Das Feld muss sich
+   füllen (`sidecar.vokabular_bau`, ebenfalls function-local). Speichern ist
+   für die Abnahme nicht nötig.
 
 Ohne Code-Signing zeigt Windows SmartScreen eine Warnung
 („Weitere Informationen" → „Trotzdem ausführen").
