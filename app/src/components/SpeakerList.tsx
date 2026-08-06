@@ -32,7 +32,14 @@ export function SpeakerList() {
       }}
     >
       <Header count={active.speakers.length} />
-      <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0, // ohne das scrollt die Sprecherliste nicht
+          overflowY: "auto",
+          padding: "8px 12px",
+        }}
+      >
         {active.speakers.map((sp) => (
           <SpeakerRow
             key={sp.id}

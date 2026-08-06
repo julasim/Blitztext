@@ -97,6 +97,14 @@ export default function App() {
         style={{
           flex: 1,
           minWidth: 0,
+          // minHeight: 0 ist hier Pflicht, nicht Kosmetik: Flex-Kinder haben
+          // standardmäßig `min-height: auto` und schrumpfen deshalb NICHT
+          // unter ihre Inhaltsgröße. Ohne diese Zeile wächst der Inhalts-
+          // bereich über die Fensterhöhe, das `overflow-y: auto` der Views
+          // greift nie (aus ihrer Sicht läuft nichts über), und alles
+          // Untere schneidet `#root { overflow: hidden }` ab. Ergebnis:
+          // kein Scrollen und unerreichbare Bedienelemente.
+          minHeight: 0,
           display: "flex",
           flexDirection: "column",
           background: "var(--bt-white)",

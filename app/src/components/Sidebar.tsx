@@ -125,7 +125,12 @@ export function Sidebar() {
       <QueuePanel />
 
       {/* Meeting list */}
-      <div style={{ padding: "4px 8px", flex: 1, overflowY: "auto" }}>
+      {/* minHeight: 0 — sonst wächst die Liste mit ihrem Inhalt, das
+          Scrollen greift nicht, und die Knöpfe darunter (Bibliothek,
+          Einstellungen) werden aus dem Fenster geschoben. */}
+      <div
+        style={{ padding: "4px 8px", flex: 1, minHeight: 0, overflowY: "auto" }}
+      >
         <div
           style={{
             padding: "10px 10px 6px",
